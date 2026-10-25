@@ -1,0 +1,13 @@
+id = "jhonsanchez.orchestrator"
+name = "Orchestrator"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+description = "One Orchestrator per Topic for herdr agents: Seating, Watches, a Heartbeat and Escalations while you're away"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "start"
+title = "Start this workspace's orchestrator"
+description = "Seat the orchestrator of the topic this workspace's repo belongs to"
+contexts = ["workspace", "tab", "pane"]
+command = ["sh", "bin/herdr-orch", "start"]
