@@ -66,6 +66,22 @@ class RunnerTest(unittest.TestCase):
         self.runner.tick(now=10)
         self.assertEqual(self.texts(), ["waki-1 blocked"])
 
+    def test_a_gone_agents_registry_entry_is_removed(self) -> None:
+        self.state.take("w1:waki-1", "waki-1")
+        self.agents(orch="working", **{"waki-1": "working"})
+        self.runner.tick(now=0)
+        self.agents(orch="working")
+        self.runner.tick(now=10)
+        self.assertEqual(self.texts(), ["waki-1 gone"])
+        self.assertEqual(self.state.managed(), {})
+
+    def test_a_registry_entry_stays_while_its_pane_still_hosts_the_agent(self) -> None:
+        self.state.take("w1:waki-1", "waki-1")
+        self.agents(orch="working", **{"waki-1": "working"})
+        self.runner.tick(now=0)
+        self.runner.tick(now=10)
+        self.assertEqual(self.state.managed(), {"w1:waki-1": "waki-1"})
+
     def test_watch_lines_become_events(self) -> None:
         self.agents(orch="working")
         self.watches.pending = [("jira", "WAKI-7 Done")]
