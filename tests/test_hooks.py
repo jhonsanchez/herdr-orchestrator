@@ -62,6 +62,24 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(second["question"], "Add tags?")
         self.assertNotEqual(first["id"], second["id"])
 
+    def test_the_recommended_option_is_moved_first(self) -> None:
+        self.state.take("w1:p2", "waki-12")
+        ask = {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion", "tool_input": {"questions": [
+            {"question": "Which?", "options": [{"label": "Blue"}, {"label": "Red (Recommended)"}, {"label": "Green"}]},
+        ]}}
+        handle(ask, self.env, now=1.0)
+        [item] = self.items()
+        self.assertEqual(item["options"], ["Red (Recommended)", "Blue", "Green"])
+
+    def test_main_passes_malformed_input_through_silently(self) -> None:
+        import io, sys
+        from unittest import mock
+        from herdr_orch.hooks import main
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdin", io.StringIO("not json")), mock.patch.object(sys, "stdout", out):
+            self.assertEqual(main(), 0)
+        self.assertEqual(out.getvalue(), "")
+
     def test_a_permission_prompt_is_recorded_and_left_to_wait(self) -> None:
         self.state.take("w1:p2", "waki-12")
         self.assertIsNone(handle(PERMISSION, self.env, now=5.0))

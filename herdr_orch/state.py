@@ -13,7 +13,7 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Literal, Mapping, NamedTuple
 
 PLUGIN_ID = "jhonsanchez.orchestrator"
 
@@ -25,6 +25,14 @@ def state_root(env: Mapping[str, str] = os.environ) -> Path:
         return Path(env["HERDR_PLUGIN_STATE_DIR"])
     home = env.get("HOME") or str(Path.home())
     return Path(home) / ".local/state/herdr/plugins" / PLUGIN_ID
+
+
+Kind = Literal["decision", "permission", "question"]
+
+
+class Managed(NamedTuple):
+    topic: str
+    agent: str
 
 
 @dataclass(frozen=True)
@@ -93,7 +101,13 @@ class TopicState:
         return out
 
     # Inbox: one JSON object per line, format v1 (docs/inbox-v1.md).
-    def append_inbox(self, item: dict[str, object]) -> None:
+    def escalate(self, agent: str, pane: str, kind: Kind, question: str, options: list[str],
+                 now: float, guess: bool = False) -> None:
+        item = {
+            "v": 1, "id": uuid.uuid4().hex[:12], "topic": self.topic, "agent": agent, "pane": pane,
+            "kind": kind, "question": question, "options": options, "guess": guess,
+            "status": "open", "answer": None, "created_at": now,
+        }
         self.dir.mkdir(parents=True, exist_ok=True)
         with self.inbox.open("a") as f:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
@@ -108,17 +122,7 @@ class TopicState:
         return float(self.heartbeat.read_text().strip())
 
 
-def new_item(topic: str, agent: str, pane: str, kind: str, question: str, options: list[str],
-             now: float, guess: bool = False) -> dict[str, object]:
-    """An Inbox item, format v1."""
-    return {
-        "v": 1, "id": uuid.uuid4().hex[:12], "topic": topic, "agent": agent, "pane": pane, "kind": kind,
-        "question": question, "options": options, "guess": guess, "status": "open", "answer": None,
-        "created_at": now,
-    }
-
-
-def find_managed(root: Path, pane_id: str) -> tuple[str, str] | None:
+def find_managed(root: Path, pane_id: str) -> Managed | None:
     """The (topic, agent) a pane is registered under, if any Topic manages it."""
     topics = root / "topics"
     if not topics.is_dir():
@@ -126,5 +130,17 @@ def find_managed(root: Path, pane_id: str) -> tuple[str, str] | None:
     for d in sorted(topics.iterdir()):
         entry = d / "registry" / pane_id
         if entry.is_file():
-            return d.name, entry.read_text().strip()
+            return Managed(d.name, entry.read_text().strip())
+    return None
+
+
+def find_registration(root: Path, agent: str) -> tuple[str, str] | None:
+    """The (topic, pane id) an agent is registered under, found by its name."""
+    topics = root / "topics"
+    if not topics.is_dir():
+        return None
+    for d in sorted(topics.iterdir()):
+        for pane, name in TopicState(root, d.name).managed().items():
+            if name == agent:
+                return d.name, pane
     return None

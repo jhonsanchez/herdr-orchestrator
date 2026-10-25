@@ -2,17 +2,17 @@
 
 Let coding agents in [herdr](https://herdr.dev) keep working while you're away, with one view of what needs you.
 
-**Status:** the herdr plugin core (Topics, the Watch runner, the Heartbeat, Seating) and the routing hooks with handover are in place. The Attention pane (#2) is next. The vocabulary is in [CONTEXT.md](CONTEXT.md) and the decisions are in [docs/adr/](docs/adr/).
+**Status:** the herdr plugin core (Topics, the Watch runner, the Heartbeat, Seating) and the routing hooks with Handover are in place. The Attention pane (#2) is next. The vocabulary is in [CONTEXT.md](CONTEXT.md) and the decisions are in [docs/adr/](docs/adr/).
 
 ## Requirements
 - herdr 0.9.5 or newer, on Linux or macOS
-- Python 3.11 or newer (stdlib only)
+- Python 3.11 or newer for `herdr-orch` (stdlib only). The routing hooks also run on older Python 3; they never block a session
 
 ## Install
 Two plugins come from this one repo (ADR-0002):
 
 ```sh
-herdr plugin install jhonsanchez/herdr-orchestrator          # Topics, runner, Seating, actions
+herdr plugin install jhonsanchez/herdr-orchestrator          # Topics, Watch runner, Seating, actions
 claude plugin marketplace add jhonsanchez/herdr-orchestrator
 claude plugin install herdr-orchestrator@herdr-orchestrator  # the routing hooks
 ```

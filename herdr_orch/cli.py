@@ -28,7 +28,7 @@ from herdr_orch.runner import Runner
 from herdr_orch.seating import seat, start
 from herdr_orch.state import TopicState, find_managed, state_root
 from herdr_orch.supervisor import Supervisor
-from herdr_orch.topics import Topic, config_root, init_topic, load_topics, topic_for
+from herdr_orch.topics import Topic, config_root, init_topic, load_topics, topic_for, topic_for_workspace
 
 CLI = str(Path(__file__).resolve().parent.parent / "bin" / "herdr-orch")
 TICK_SECONDS = 15.0
@@ -41,11 +41,10 @@ def resolve_topic(context_json: str, workspace_env: str, topics: list[Topic], he
     except json.JSONDecodeError:
         context = {}
     repo_root = find_key(context, "repo_root")
-    if not repo_root:
-        ws_id = find_key(context, "workspace_id") or workspace_env
-        ws = next((w for w in herdr.workspaces() if w.workspace_id == ws_id), None)
-        repo_root = ws.repo_root if ws else None
-    return topic_for(repo_root, topics, home) if repo_root else None
+    if repo_root:
+        return topic_for(repo_root, topics, home)
+    ws_id = find_key(context, "workspace_id") or workspace_env
+    return topic_for_workspace(herdr.workspaces(), ws_id, topics, home)
 
 
 def main(
@@ -93,7 +92,7 @@ def main(
             else:
                 give_back(states, herdr, args.agent)
                 print(f"{args.agent} given back")
-        except ValueError as e:
+        except (ValueError, RuntimeError) as e:
             print(e, file=sys.stderr)
             return 1
         return 0

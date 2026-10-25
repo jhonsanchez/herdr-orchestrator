@@ -45,6 +45,19 @@ class HandoverTest(unittest.TestCase):
         self.assertEqual(self.state.managed(), {})
         self.assertEqual(len(self.herdr.of("prompt")), 2)
 
+    def test_give_back_clears_an_agent_that_has_already_exited(self) -> None:
+        self.run_cli(["take", "falcon-9"])
+        self.herdr.agent_list = []
+        self.assertEqual(self.run_cli(["give-back", "falcon-9"]), 0)
+        self.assertEqual(self.state.managed(), {})
+
+    def test_a_brief_that_never_arrives_is_reported_not_a_crash(self) -> None:
+        def stuck(agent: str, text: str) -> None:
+            raise RuntimeError("the prompt never reached falcon-9")
+        self.herdr.prompt = stuck  # type: ignore[method-assign]
+        self.assertEqual(self.run_cli(["take", "falcon-9"]), 1)
+        self.assertEqual(self.state.managed(), {"w4:p1": "falcon-9"})
+
     def test_an_agent_no_topic_matches_cannot_be_taken(self) -> None:
         self.assertEqual(self.run_cli(["take", "loose"]), 1)
         self.assertEqual(self.run_cli(["take", "nobody"]), 1)

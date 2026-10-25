@@ -15,7 +15,7 @@ import sys
 import time
 from typing import Any, Mapping
 
-from herdr_orch.state import TopicState, find_managed, new_item, state_root
+from herdr_orch.state import TopicState, find_managed, state_root
 
 # Worded as validated by the #4 spike.
 DENY_REASON = (
@@ -34,6 +34,10 @@ def _summary(tool_input: Any) -> str:
     return ""
 
 
+def _recommended_first(labels: list[str]) -> list[str]:
+    return sorted(labels, key=lambda label: "(Recommended)" not in label)
+
+
 def _last_paragraph(message: str) -> str:
     text = TRAILING_MARKUP.sub("", message.strip())
     return text.split("\n\n")[-1].strip()
@@ -44,17 +48,18 @@ def handle(payload: Mapping[str, Any], env: Mapping[str, str], now: float) -> di
     pane = env.get("HERDR_PANE_ID")
     if not pane:
         return None
-    managed = find_managed(state_root(env), pane)
+    root = state_root(env)
+    managed = find_managed(root, pane)
     if managed is None:
         return None
-    topic, agent = managed
-    state = TopicState(state_root(env), topic)
+    agent = managed.agent
+    state = TopicState(root, managed.topic)
     event = payload.get("hook_event_name")
 
     if event == "PreToolUse" and payload.get("tool_name") == "AskUserQuestion":
         for q in payload.get("tool_input", {}).get("questions", []):
-            options = [str(o.get("label", "")) for o in q.get("options", [])]
-            state.append_inbox(new_item(topic, agent, pane, "decision", str(q.get("question", "")), options, now))
+            options = _recommended_first([str(o.get("label", "")) for o in q.get("options", [])])
+            state.escalate(agent, pane, "decision", str(q.get("question", "")), options, now)
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": DENY_REASON,
         }}
@@ -63,13 +68,13 @@ def handle(payload: Mapping[str, Any], env: Mapping[str, str], now: float) -> di
         tool = str(payload.get("tool_name", "a tool"))
         detail = _summary(payload.get("tool_input"))
         question = f"Allow {tool}: {detail}" if detail else f"Allow {tool}"
-        state.append_inbox(new_item(topic, agent, pane, "permission", question, [], now))
+        state.escalate(agent, pane, "permission", question, [], now)
         return None
 
     if event == "Stop" and not payload.get("stop_hook_active"):
         last = _last_paragraph(str(payload.get("last_assistant_message") or ""))
         if last.endswith("?"):
-            state.append_inbox(new_item(topic, agent, pane, "question", last, [], now, guess=True))
+            state.escalate(agent, pane, "question", last, [], now, guess=True)
         return None
     return None
 

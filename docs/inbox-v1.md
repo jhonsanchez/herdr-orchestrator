@@ -11,7 +11,7 @@ Each Topic's Inbox is `topics/<topic>/inbox.jsonl` under the state root (`~/.loc
 | `pane` | string | That agent's herdr pane id, which is the handle for answering it or opening its pane. |
 | `kind` | `decision` \| `permission` \| `question` | Which it is: an AskUserQuestion, a permission prompt, or a turn that ended in a question. |
 | `question` | string | What is asked, in the agent's words. |
-| `options` | string[] | Choices with the recommended one first. Empty when the agent gave none. |
+| `options` | string[] | Choices with the recommended one first. The hooks move a `(Recommended)` label to the front. Empty when the agent gave none. Always empty for `permission`: the answer is given in the agent's own pane. |
 | `guess` | bool | `true` when the item was inferred (a turn ending in `?`), so a false positive is easy to dismiss. |
 | `status` | `open` \| `resolved` \| `dismissed` | Writers create items `open`. |
 | `answer` | string \| null | The answer that was sent, once there is one. |
