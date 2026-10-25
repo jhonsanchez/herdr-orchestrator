@@ -1,0 +1,18 @@
+# Only what differs from the defaults. Every key is optional.
+
+# Repo roots this Topic manages (shell-style patterns, ~ allowed).
+# match = ["~/projects/acme/*"]
+
+# Seated agents: model, base ref for new worktrees, env exported in the pane first.
+# model = "sonnet"
+# base = "origin/main"
+# [env]
+# CLAUDE_CONFIG_DIR = "~/.claude-acme"
+
+# Command that sends you a push: gets "<title>\n<body>" on stdin. Default: none.
+# notify_command = ["ntfy-send"]
+
+# Minutes before an unanswered Topic is Unattended, and before a silent agent is reported.
+# heartbeat_window_min = 15
+# stale_min = 40
+# hung_min = 60

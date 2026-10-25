@@ -1,0 +1,2 @@
+#!/bin/sh
+PYTHONPATH="$(dirname "$0")/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m herdr_orch.hooks 2>/dev/null || exit 0

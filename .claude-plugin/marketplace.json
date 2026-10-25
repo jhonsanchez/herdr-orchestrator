@@ -1,0 +1,11 @@
+{
+  "name": "herdr-orchestrator",
+  "owner": { "name": "Jhon Sanchez" },
+  "plugins": [
+    {
+      "name": "herdr-orchestrator",
+      "source": "./",
+      "description": "Routes a Managed herdr agent's questions and permission prompts to its Topic's Orchestrator instead of the user"
+    }
+  ]
+}
