@@ -45,6 +45,7 @@ class Topic:
     match: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     model: str | None = None
+    orchestrator_model: str | None = None  # the Orchestrator's own; defaults to model
     base: str | None = None
     notify_command: list[str] = field(default_factory=list)
     notify: str = "none"  # stop-hook | herdr | none; a notify_command wins over it

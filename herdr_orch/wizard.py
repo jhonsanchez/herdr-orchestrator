@@ -81,7 +81,7 @@ def ask_answers(repo_root: str, repo_roots: list[str], env: Mapping[str, str], h
     default_match = suggest_match(repo_root, home)
     match = ask(f"Repos (a pattern; {default_match} covers {len(matching_repos(default_match, repo_roots, home))} repos "
                 "open in herdr)", default_match)
-    model = ask("Model for seated agents", "sonnet")
+    model = ask("Model for the Orchestrator and its seated agents", "sonnet")
     account = suggest_account(env, home)
     env_answer = ask("Claude account: env a seated agent needs, KEY=VALUE, or none",
                      " ".join(f"{k}={v}" for k, v in account.items()) or "none")

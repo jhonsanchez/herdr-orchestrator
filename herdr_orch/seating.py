@@ -127,7 +127,8 @@ def start(topic: Topic, state: TopicState, herdr: Herdr, cli: str, say: Callable
     # The runner and the Orchestrator run in ordinary shells: hand them the roots this process resolved.
     roots = f"HERDR_ORCH_CONFIG={shlex.quote(str(topic.config_root))} HERDR_ORCH_STATE={shlex.quote(str(state.root))}"
     cmd = f"{roots} {shlex.quote(cli)}"
-    started = herdr.agent_start(name, root_pane, [])
+    model = topic.orchestrator_model or topic.model
+    started = herdr.agent_start(name, root_pane, ["--model", model] if model else [])
     # The runner comes second: before the Orchestrator exists, it would report the Topic Unattended.
     runner_pane = herdr.pane_split(root_pane, str(topic.dir))
     herdr.pane_run(runner_pane, f"{cmd} watch {topic.name}")

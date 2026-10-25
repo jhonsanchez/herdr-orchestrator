@@ -33,7 +33,7 @@ A Topic is one rule set with its own account and credentials. Each Topic has its
 |---|---|
 | Name | the repo's parent folder (`~/projects/personal/x` → `personal`) |
 | Repos | that folder as a pattern, with how many repos open in herdr it covers |
-| Model | sonnet |
+| Model | sonnet, for the Orchestrator and the agents it seats (`orchestrator_model` in `topic.toml` gives the Orchestrator its own) |
 | Claude account | what your shell uses (`CLAUDE_CONFIG_DIR` when set) |
 | Push alerts | `stop-hook`: your own Claude Stop hook, run with the alert as its message, so nothing is copied into the Topic. Without one, `herdr` (herdr's notification). Or `none`, or any command |
 | Yours alone | a pre-ticked checklist: merging, production, spending, secrets |
