@@ -6,6 +6,7 @@ brief.md and watches/ sit beside it.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -45,6 +46,7 @@ class Topic:
     model: str | None = None
     base: str | None = None
     notify_command: list[str] = field(default_factory=list)
+    notify: str = "none"  # stop-hook | herdr | none; a notify_command wins over it
     heartbeat_window_min: int = 15
     stale_min: int = 40
     hung_min: int = 60
@@ -105,11 +107,48 @@ def topic_for_workspace(workspaces: list[Workspace], workspace_id: str, topics: 
     return topic_for(ws.repo_root, topics, home) if ws and ws.repo_root else None
 
 
-def init_topic(root: Path, name: str) -> Path:
+NOTIFY_MODES = ("stop-hook", "herdr", "none")
+
+
+@dataclass(frozen=True)
+class Answers:
+    """What the setup wizard settled; None leaves the template's default."""
+    match: list[str] | None = None
+    model: str | None = None
+    env: dict[str, str] | None = None
+    notify: str | None = None
+    notify_command: list[str] | None = None
+    yours_alone: list[str] | None = None
+
+
+def _topic_toml(a: Answers) -> str:
+    lines = ["# Written by herdr-orch init. Only what differs from the defaults; edit freely."]
+    for key in ("match", "model", "notify", "notify_command"):
+        value = getattr(a, key)
+        if value:
+            lines.append(f"{key} = {json.dumps(value)}")  # a JSON string or list of strings is valid TOML
+    if a.env:
+        lines += ["", "[env]"] + [f"{k} = {json.dumps(v)}" for k, v in a.env.items()]
+    return "\n".join(lines) + "\n"
+
+
+def _with_yours_alone(playbook: str, items: list[str]) -> str:
+    head, _, rest = playbook.partition("## Yours alone")
+    intro = [line for line in rest.splitlines() if line.strip() and not line.startswith("- ")]
+    body = "\n".join(intro[:1])
+    return f"{head}## Yours alone\n\n{body}\n\n" + "".join(f"- {i}\n" for i in items)
+
+
+def init_topic(root: Path, name: str, answers: Answers | None = None) -> Path:
     if not NAME.match(name):
         raise ValueError(f"topic name must match {NAME.pattern}: {name!r}")
     dest = root / "topics" / name
     if dest.exists():
         raise FileExistsError(dest)
     shutil.copytree(TEMPLATE, dest)
+    if answers is not None:
+        (dest / "topic.toml").write_text(_topic_toml(answers))
+        if answers.yours_alone:
+            playbook = dest / "playbook.md"
+            playbook.write_text(_with_yours_alone(playbook.read_text(), answers.yours_alone))
     return dest

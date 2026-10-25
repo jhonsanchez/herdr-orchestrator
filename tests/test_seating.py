@@ -1,3 +1,4 @@
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -5,7 +6,7 @@ from pathlib import Path
 
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch import seating
-from herdr_orch.seating import agent_name, seat, start, startup_screen
+from herdr_orch.seating import agent_name, default_base, seat, start, startup_screen
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
 from tests.fakes import FakeHerdr
@@ -32,6 +33,32 @@ TRUST_SCREEN = """ Quick safety check: Is this a project you created or one you 
 PROMPT = """ ☀  Clear  0% of context
 ❯ Try "how does <filepath> work?"
   ⏵⏵ auto mode on (shift+tab to cycle)"""
+
+
+def cloned_repo(root: Path, default: str) -> Path:
+    """A clone of a bare repo whose default branch is `default`, so origin/HEAD is set."""
+    def run(*args: str) -> None:
+        subprocess.run(args, check=True, capture_output=True)
+
+    run("git", "init", "-q", "--bare", "-b", default, str(root / "remote.git"))
+    seed = root / "seed"
+    run("git", "init", "-q", "-b", default, str(seed))
+    run("git", "-C", str(seed), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
+    run("git", "-C", str(seed), "push", "-q", str(root / "remote.git"), default)
+    run("git", "clone", "-q", str(root / "remote.git"), str(root / "clone"))
+    return root / "clone"
+
+
+class DefaultBaseTest(unittest.TestCase):
+    def test_reads_the_repos_default_branch_from_origin_head(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(default_base(str(cloned_repo(Path(d), "trunk"))), "origin/trunk")
+
+    def test_a_repo_without_origin_head_leaves_it_to_herdr(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q", d], check=True)
+            self.assertIsNone(default_base(d))
+            self.assertIsNone(default_base(str(Path(d) / "missing")))
 
 
 class StartupScreenTest(unittest.TestCase):
@@ -136,6 +163,14 @@ class SeatingTest(unittest.TestCase):
         seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: None)
         self.assertEqual(self.herdr.of("wait_ready"), [("wait_ready", "falcon-12")])
         self.assertEqual(len(self.herdr.of("prompt")), 1)
+
+    def test_seat_without_a_topic_base_uses_the_repos_default_branch(self) -> None:
+        repo = cloned_repo(Path(self.tmp.name), "main")
+        self.herdr.workspace_list = [Workspace("w4", "x", str(repo))]
+        topic = Topic(name="personal", dir=self.topic.dir)
+        seat(topic, self.state, self.herdr, workspace_id="w4", branch="issue-3", home="/home/u")
+        [call] = self.herdr.of("worktree_create")
+        self.assertEqual(call[-1], "origin/main")
 
     def test_seat_waits_out_the_mcp_screen_before_briefing(self) -> None:
         self.herdr.screens["w9:p1"] = [MCP_SCREEN, MCP_SCREEN, PROMPT]

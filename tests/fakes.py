@@ -59,6 +59,9 @@ class FakeHerdr:
         self.calls.append(("agent_start", name, pane_id, tuple(args)))
         return self.ready_after_start
 
+    def open_setup(self, repo_root: str) -> None:
+        self.calls.append(("open_setup", repo_root))
+
     def focus(self, target: str) -> None:
         self.calls.append(("focus", target))
 
