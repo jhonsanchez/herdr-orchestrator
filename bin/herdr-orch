@@ -1,0 +1,2 @@
+#!/bin/sh
+exec env PYTHONPATH="$(dirname "$0")/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m herdr_orch.cli "$@"

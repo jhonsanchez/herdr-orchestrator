@@ -1,0 +1,136 @@
+"""The herdr adapter: every herdr CLI call goes through here, so tests swap in a fake."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import time
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+
+@dataclass(frozen=True)
+class Agent:
+    name: str | None
+    status: str
+    pane_id: str
+    workspace_id: str
+
+
+@dataclass(frozen=True)
+class Workspace:
+    workspace_id: str
+    label: str
+    repo_root: str | None
+
+
+class Herdr(Protocol):
+    def agents(self) -> list[Agent]: ...
+    def read_pane(self, pane_id: str, lines: int) -> str: ...
+    def prompt(self, agent: str, text: str) -> None: ...
+    def workspaces(self) -> list[Workspace]: ...
+    def workspace_create(self, cwd: str, label: str) -> tuple[str, str]: ...
+    def worktree_create(self, workspace_id: str, branch: str, label: str, path: str, base: str | None) -> str: ...
+    def pane_split(self, pane_id: str, cwd: str) -> str: ...
+    def pane_run(self, pane_id: str, command: str) -> None: ...
+    def agent_start(self, name: str, pane_id: str, args: list[str]) -> bool: ...
+    def wait_ready(self, name: str, timeout_ms: int) -> bool: ...
+
+
+def _first_pane_id(value: Any) -> str:
+    if isinstance(value, dict):
+        if isinstance(value.get("pane_id"), str):
+            return str(value["pane_id"])
+        for v in value.values():
+            found = _first_pane_id(v)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for v in value:
+            found = _first_pane_id(v)
+            if found:
+                return found
+    return ""
+
+
+class CliHerdr:
+    """herdr through HERDR_BIN_PATH (what herdr injects into plugin commands), else PATH."""
+
+    def __init__(self, binary: str | None = None) -> None:
+        self.binary = binary or os.environ.get("HERDR_BIN_PATH") or "herdr"
+
+    def _json(self, *args: str) -> Any:
+        out = subprocess.run([self.binary, *args], check=True, capture_output=True, text=True).stdout
+        return json.loads(out) if out.strip() else {}
+
+    def agents(self) -> list[Agent]:
+        data = self._json("agent", "list")
+        return [
+            Agent(a.get("name"), a.get("agent_status", "unknown"), a["pane_id"], a["workspace_id"])
+            for a in data.get("result", {}).get("agents", [])
+        ]
+
+    def read_pane(self, pane_id: str, lines: int) -> str:
+        return subprocess.run(
+            [self.binary, "pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines)],
+            capture_output=True, text=True,
+        ).stdout
+
+    def prompt(self, agent: str, text: str) -> None:
+        """Send, then check the prompt reached the screen: one sent while Claude is still
+        settling after a startup dialog can be swallowed. Resent once if it is missing."""
+        snippet = text.splitlines()[0][:30]
+        for _ in range(2):
+            self._json("agent", "prompt", agent, text)
+            for _ in range(8):
+                time.sleep(1)
+                screen = subprocess.run(
+                    [self.binary, "agent", "read", agent, "--source", "recent-unwrapped", "--lines", "200"],
+                    capture_output=True, text=True,
+                ).stdout
+                if snippet in screen:
+                    return
+
+    def workspaces(self) -> list[Workspace]:
+        data = self._json("workspace", "list")
+        return [
+            Workspace(w["workspace_id"], w.get("label", ""), (w.get("worktree") or {}).get("repo_root"))
+            for w in data.get("result", {}).get("workspaces", [])
+        ]
+
+    def workspace_create(self, cwd: str, label: str) -> tuple[str, str]:
+        r = self._json("workspace", "create", "--cwd", cwd, "--label", label, "--no-focus")["result"]
+        return r["workspace"]["workspace_id"], r["root_pane"]["pane_id"]
+
+    def worktree_create(self, workspace_id: str, branch: str, label: str, path: str, base: str | None) -> str:
+        args = ["worktree", "create", "--workspace", workspace_id, "--branch", branch,
+                "--label", label, "--path", path, "--no-focus"]
+        if base:
+            args += ["--base", base]
+        return _first_pane_id(self._json(*args))
+
+    def pane_split(self, pane_id: str, cwd: str) -> str:
+        r = self._json("pane", "split", "--pane", pane_id, "--direction", "down", "--cwd", cwd, "--no-focus")
+        return str(r["result"]["pane"]["pane_id"])
+
+    def pane_run(self, pane_id: str, command: str) -> None:
+        self._json("pane", "run", pane_id, command)
+
+    def agent_start(self, name: str, pane_id: str, args: list[str]) -> bool:
+        """False when the agent started but waits at a startup dialog (folder trust, login)."""
+        cmd = ["agent", "start", name, "--kind", "claude", "--pane", pane_id, "--timeout", "60000"]
+        try:
+            self._json(*(cmd + (["--", *args] if args else [])))
+        except subprocess.CalledProcessError as e:
+            if "agent_not_ready" in (e.stderr or ""):
+                return False
+            raise
+        return True
+
+    def wait_ready(self, name: str, timeout_ms: int) -> bool:
+        r = subprocess.run(
+            [self.binary, "agent", "wait", name, "--until", "idle", "--timeout", str(timeout_ms)],
+            capture_output=True, text=True,
+        )
+        return r.returncode == 0
