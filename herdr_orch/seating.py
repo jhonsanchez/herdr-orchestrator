@@ -10,9 +10,8 @@ from pathlib import Path
 from typing import Callable
 
 from herdr_orch.herdr import Herdr
-from herdr_orch.runner import orchestrator_name
 from herdr_orch.state import TopicState
-from herdr_orch.topics import Topic
+from herdr_orch.topics import Topic, expand_home
 
 
 def agent_name(branch: str) -> str:
@@ -21,10 +20,6 @@ def agent_name(branch: str) -> str:
     if not name or not name[0].isalpha():
         name = "a-" + name
     return name[:32]
-
-
-def _expand(value: str, home: str) -> str:
-    return home + value[1:] if value.startswith("~") else value
 
 
 DIALOG_TIMEOUT_MS = 15 * 60 * 1000
@@ -59,12 +54,14 @@ def seat(
     say: Callable[[str], None] = _stderr,
 ) -> Seated:
     home = home or str(Path.home())
-    ws = next(w for w in herdr.workspaces() if w.workspace_id == workspace_id)
+    ws = next((w for w in herdr.workspaces() if w.workspace_id == workspace_id), None)
+    if ws is None:
+        raise ValueError(f"no herdr workspace {workspace_id}")
     repo = Path(ws.repo_root or ws.label).name
     path = f"{home}/.herdr/worktrees/{repo}/{branch}"
     pane = herdr.worktree_create(workspace_id, branch, label or branch, path, topic.base)
     for key, value in topic.env.items():
-        herdr.pane_run(pane, f"export {key}={shlex.quote(_expand(value, home))}")
+        herdr.pane_run(pane, f"export {key}={shlex.quote(expand_home(value, home))}")
     name = agent_name(branch)
     started = herdr.agent_start(name, pane, ["--model", topic.model] if topic.model else [])
     state.take(pane, name)
@@ -81,17 +78,23 @@ def seat(
 def start(topic: Topic, state: TopicState, herdr: Herdr, cli: str, say: Callable[[str], None] = _stderr) -> bool:
     """Seat the Orchestrator in its own workspace, with the Watch runner in a pane beside it.
     False when its startup dialog was never answered, so it was not briefed."""
-    name = orchestrator_name(topic.name)
+    name = topic.orchestrator
     if any(a.name == name for a in herdr.agents()):
         return True
+    if not topic.has_yours_alone():
+        raise ValueError(f"{topic.playbook_path} needs a '## Yours alone' section before its Orchestrator starts")
+    if any(w.label == name for w in herdr.workspaces()):
+        raise RuntimeError(f"workspace {name} is open without its Orchestrator: close it, then start again")
     state.ensure()
     _, root_pane = herdr.workspace_create(str(topic.dir), name)
-    runner_pane = herdr.pane_split(root_pane, str(topic.dir))
-    # The runner pane and the Orchestrator run in ordinary shells: hand them the roots this process resolved.
-    roots = f"HERDR_ORCH_CONFIG={shlex.quote(str(topic.dir.parent.parent))} HERDR_ORCH_STATE={shlex.quote(str(state.dir.parent.parent))}"
+    # The runner and the Orchestrator run in ordinary shells: hand them the roots this process resolved.
+    roots = f"HERDR_ORCH_CONFIG={shlex.quote(str(topic.config_root))} HERDR_ORCH_STATE={shlex.quote(str(state.root))}"
     cmd = f"{roots} {shlex.quote(cli)}"
+    started = herdr.agent_start(name, root_pane, [])
+    # The runner comes second: before the Orchestrator exists, it would report the Topic Unattended.
+    runner_pane = herdr.pane_split(root_pane, str(topic.dir))
     herdr.pane_run(runner_pane, f"{cmd} watch {topic.name}")
-    if not _ready(herdr, name, herdr.agent_start(name, root_pane, []), say):
+    if not _ready(herdr, name, started, say):
         return False
     herdr.prompt(
         name,

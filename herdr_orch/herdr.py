@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from herdr_orch.state import PLUGIN_ID
+
 
 @dataclass(frozen=True)
 class Agent:
@@ -35,23 +37,25 @@ class Herdr(Protocol):
     def pane_split(self, pane_id: str, cwd: str) -> str: ...
     def pane_run(self, pane_id: str, command: str) -> None: ...
     def agent_start(self, name: str, pane_id: str, args: list[str]) -> bool: ...
+    def plugin_config_dir(self) -> str | None: ...
     def wait_ready(self, name: str, timeout_ms: int) -> bool: ...
 
 
-def _first_pane_id(value: Any) -> str:
+def find_key(value: Any, key: str) -> str | None:
+    """The first string under `key`, searched depth-first through nested JSON."""
     if isinstance(value, dict):
-        if isinstance(value.get("pane_id"), str):
-            return str(value["pane_id"])
-        for v in value.values():
-            found = _first_pane_id(v)
-            if found:
-                return found
+        if isinstance(value.get(key), str):
+            return str(value[key])
+        children: list[Any] = list(value.values())
     elif isinstance(value, list):
-        for v in value:
-            found = _first_pane_id(v)
-            if found:
-                return found
-    return ""
+        children = value
+    else:
+        return None
+    for child in children:
+        found = find_key(child, key)
+        if found:
+            return found
+    return None
 
 
 class CliHerdr:
@@ -60,8 +64,11 @@ class CliHerdr:
     def __init__(self, binary: str | None = None) -> None:
         self.binary = binary or os.environ.get("HERDR_BIN_PATH") or "herdr"
 
+    def _run(self, *args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([self.binary, *args], check=check, capture_output=True, text=True)
+
     def _json(self, *args: str) -> Any:
-        out = subprocess.run([self.binary, *args], check=True, capture_output=True, text=True).stdout
+        out = self._run(*args, check=True).stdout
         return json.loads(out) if out.strip() else {}
 
     def agents(self) -> list[Agent]:
@@ -72,10 +79,7 @@ class CliHerdr:
         ]
 
     def read_pane(self, pane_id: str, lines: int) -> str:
-        return subprocess.run(
-            [self.binary, "pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines)],
-            capture_output=True, text=True,
-        ).stdout
+        return self._run("pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines)).stdout
 
     def prompt(self, agent: str, text: str) -> None:
         """Send, then check the prompt reached the screen: one sent while Claude is still
@@ -85,10 +89,7 @@ class CliHerdr:
             self._json("agent", "prompt", agent, text)
             for _ in range(8):
                 time.sleep(1)
-                screen = subprocess.run(
-                    [self.binary, "agent", "read", agent, "--source", "recent-unwrapped", "--lines", "200"],
-                    capture_output=True, text=True,
-                ).stdout
+                screen = self._run("agent", "read", agent, "--source", "recent-unwrapped", "--lines", "200").stdout
                 if snippet in screen:
                     return
 
@@ -108,7 +109,7 @@ class CliHerdr:
                 "--label", label, "--path", path, "--no-focus"]
         if base:
             args += ["--base", base]
-        return _first_pane_id(self._json(*args))
+        return find_key(self._json(*args), "pane_id") or ""
 
     def pane_split(self, pane_id: str, cwd: str) -> str:
         r = self._json("pane", "split", "--pane", pane_id, "--direction", "down", "--cwd", cwd, "--no-focus")
@@ -128,9 +129,13 @@ class CliHerdr:
             raise
         return True
 
+    def plugin_config_dir(self) -> str | None:
+        """Where herdr keeps this plugin's config; None when herdr can't say."""
+        try:
+            out = self._run("plugin", "config-dir", PLUGIN_ID)
+        except OSError:
+            return None
+        return (out.stdout.strip() or None) if out.returncode == 0 else None
+
     def wait_ready(self, name: str, timeout_ms: int) -> bool:
-        r = subprocess.run(
-            [self.binary, "agent", "wait", name, "--until", "idle", "--timeout", str(timeout_ms)],
-            capture_output=True, text=True,
-        )
-        return r.returncode == 0
+        return self._run("agent", "wait", name, "--until", "idle", "--timeout", str(timeout_ms)).returncode == 0

@@ -47,9 +47,14 @@ class WatchShutdownTest(unittest.TestCase):
             watch_pid = int(pidfile.read_text())
             proc.send_signal(signal.SIGTERM)
             proc.wait(timeout=10)
-            time.sleep(0.3)
-            with self.assertRaises(ProcessLookupError):
-                os.kill(watch_pid, 0)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(watch_pid, 0)
+                except ProcessLookupError:
+                    return
+                time.sleep(0.05)
+            self.fail(f"watch {watch_pid} still running after the runner stopped")
 
 
 class CliTest(unittest.TestCase):
@@ -66,6 +71,7 @@ class CliTest(unittest.TestCase):
             self.assertEqual(main(["init", "waki"], self.env), 0)
             self.assertEqual(main(["heartbeat", "waki"], self.env, now=lambda: 77.0), 0)
         self.assertTrue((Path(self.env["HERDR_ORCH_CONFIG"]) / "topics/waki/playbook.md").is_file())
+        self.assertTrue((Path(self.env["HERDR_ORCH_STATE"]) / "topics/waki").is_dir())
         self.assertEqual(TopicState(Path(self.env["HERDR_ORCH_STATE"]), "waki").heartbeat_at(), 77.0)
 
     def test_unknown_topic_is_an_error(self) -> None:

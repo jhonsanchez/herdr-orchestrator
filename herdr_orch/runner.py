@@ -26,18 +26,14 @@ class WatchSource(Protocol):
     def lines(self) -> list[tuple[str, str]]: ...
 
 
-def orchestrator_name(topic: str) -> str:
-    return f"orch-{topic}"
-
-
 def _screen_hash(text: str) -> str:
     kept = "\n".join(line for line in text.splitlines() if not NOISE.search(line))
     return hashlib.sha1(kept.encode()).hexdigest()
 
 
 def _batch(topic: str, events: list[Event]) -> str:
-    lines = [f"- {time.strftime('%H:%M', time.localtime(e.at))} {e.watch}: {e.text}" for e in events]
-    return f"[herdr-orchestrator] New events for topic {topic}:\n" + "\n".join(lines)
+    lines = [f"- {time.strftime('%H:%M', time.localtime(e.at))} {e.source}: {e.text}" for e in events]
+    return f"[herdr-orchestrator] New Events for Topic {topic}:\n" + "\n".join(lines)
 
 
 class Runner:
@@ -50,12 +46,13 @@ class Runner:
         notify: Callable[[str, str], None],
     ) -> None:
         self.topic, self.state, self.herdr, self.watches, self.notify = topic, state, herdr, watches, notify
-        self.orchestrator = orchestrator_name(topic.name)
+        self.orchestrator = topic.orchestrator
         self.stale = StaleTracker(topic.stale_min, topic.hung_min)
         self._prev: dict[str, str] = {}
-        # Never redeliver what an earlier runner already handed over.
-        past = state.events_since(float("-inf"))
-        self._delivered_upto = past[-1].at if past else float("-inf")
+        # A new runner hands over again everything since the last Heartbeat: an Event an
+        # earlier runner logged but never delivered must not be lost; a repeat is harmless.
+        heartbeat = state.heartbeat_at()
+        self._delivered_upto = heartbeat if heartbeat is not None else float("-inf")
         self._delivering = False
         self._alerted = False
 
@@ -98,6 +95,6 @@ class Runner:
             now, heartbeat, waiting[0].at if waiting else None, orch is not None, self.topic.heartbeat_window_min
         )
         if unattended and not self._alerted:
-            reason = "its orchestrator is not running" if orch is None else f"{len(waiting)} events unanswered"
-            self.notify(f"Topic {self.topic.name} unattended", reason)
+            reason = "its Orchestrator is not running" if orch is None else f"{len(waiting)} Events unanswered"
+            self.notify(f"Topic {self.topic.name} is Unattended", reason)
         self._alerted = unattended

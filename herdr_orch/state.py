@@ -28,13 +28,14 @@ def state_root(env: Mapping[str, str] = os.environ) -> Path:
 @dataclass(frozen=True)
 class Event:
     at: float
-    watch: str
+    source: str  # a Watch's name, or the core check that reported it
     text: str
 
 
 class TopicState:
     def __init__(self, root: Path, topic: str) -> None:
         self.topic = topic
+        self.root = root
         self.dir = root / "topics" / topic
 
     @property
@@ -69,12 +70,12 @@ class TopicState:
             return {}
         return {p.name: p.read_text().strip() for p in sorted(self.registry.iterdir()) if p.is_file()}
 
-    # Events: one line per Event, "<epoch>\t<watch>\t<text>".
-    def append_event(self, watch: str, text: str, now: float) -> None:
+    # Events: one line per Event, "<epoch>\t<source>\t<text>".
+    def append_event(self, source: str, text: str, now: float) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         line = " ".join(text.split())
         with self.events.open("a") as f:
-            f.write(f"{now:.3f}\t{watch}\t{line}\n")
+            f.write(f"{now:.3f}\t{source}\t{line}\n")
 
     def events_since(self, since: float) -> list[Event]:
         if not self.events.exists():

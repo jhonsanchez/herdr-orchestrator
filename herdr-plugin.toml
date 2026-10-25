@@ -2,7 +2,7 @@ id = "jhonsanchez.orchestrator"
 name = "Orchestrator"
 version = "0.1.0"
 min_herdr_version = "0.9.5"
-description = "Per-topic orchestrators for herdr agents: seating, watches, heartbeat and escalations while you're away"
+description = "One Orchestrator per Topic for herdr agents: Seating, Watches, a Heartbeat and Escalations while you're away"
 platforms = ["linux", "macos"]
 
 [[actions]]

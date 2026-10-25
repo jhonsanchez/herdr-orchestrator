@@ -53,6 +53,9 @@ class FakeHerdr:
         self.calls.append(("agent_start", name, pane_id, tuple(args)))
         return self.ready_after_start
 
+    def plugin_config_dir(self) -> str | None:
+        return None
+
     def wait_ready(self, name: str, timeout_ms: int) -> bool:
         self.calls.append(("wait_ready", name))
         return self.becomes_ready

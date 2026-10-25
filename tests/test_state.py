@@ -49,7 +49,7 @@ class StateLayoutTest(unittest.TestCase):
         s.append_event("jira", "WAKI-1 Done", now=100.0)
         s.append_event("jira", "WAKI-2 Done", now=200.0)
         self.assertEqual(
-            [(e.at, e.watch, e.text) for e in s.events_since(150.0)],
+            [(e.at, e.source, e.text) for e in s.events_since(150.0)],
             [(200.0, "jira", "WAKI-2 Done")],
         )
 

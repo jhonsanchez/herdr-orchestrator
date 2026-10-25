@@ -58,7 +58,7 @@ class RunnerTest(unittest.TestCase):
         self.agents(orch="working")
         self.watches.pending = [("jira", "WAKI-7 Done")]
         self.runner.tick(now=5)
-        self.assertEqual([(e.watch, e.text) for e in self.state.events_since(0)], [("jira", "WAKI-7 Done")])
+        self.assertEqual([(e.source, e.text) for e in self.state.events_since(0)], [("jira", "WAKI-7 Done")])
 
     def test_events_reach_an_idle_orchestrator_once_and_wait_while_it_works(self) -> None:
         self.agents(orch="working")
@@ -72,6 +72,17 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("jira: WAKI-7 Done", str(prompt[2]))
         self.runner.tick(now=20)
         self.assertEqual(len(self.herdr.of("prompt")), 1)
+
+    def test_a_restarted_runner_redelivers_what_was_never_answered(self) -> None:
+        self.state.append_event("jira", "answered", now=100)
+        self.state.touch_heartbeat(now=150)
+        self.state.append_event("jira", "logged before a crash", now=200)
+        runner = Runner(self.topic, self.state, self.herdr, self.watches, notify=lambda t, b: None)
+        self.agents(orch="idle")
+        runner.tick(now=300)
+        [prompt] = self.herdr.of("prompt")
+        self.assertIn("logged before a crash", str(prompt[2]))
+        self.assertNotIn("answered\n", str(prompt[2]) + "\n")
 
     def test_the_turn_after_a_delivery_records_a_heartbeat(self) -> None:
         self.agents(orch="idle")

@@ -44,7 +44,12 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual(prompt[1], "falcon-12")
         self.assertIn(str(self.topic.brief_path), str(prompt[2]))
 
+    def write_playbook(self, text: str = "# Playbook\n\n## Yours alone\n\n- Production.\n") -> None:
+        self.topic.dir.mkdir(parents=True, exist_ok=True)
+        self.topic.playbook_path.write_text(text)
+
     def test_start_opens_workspace_runner_pane_and_orchestrator(self) -> None:
+        self.write_playbook()
         start(self.topic, self.state, self.herdr, cli="/opt/plug/bin/herdr-orch")
         [(_, cwd, label)] = self.herdr.of("workspace_create")
         self.assertEqual(label, "orch-zebra")
@@ -60,9 +65,32 @@ class SeatingTest(unittest.TestCase):
         [prompt] = self.herdr.of("prompt")
         self.assertIn(str(self.topic.playbook_path), str(prompt[2]))
         self.assertIn(f"HERDR_ORCH_STATE={self.state.dir.parent.parent} /opt/plug/bin/herdr-orch heartbeat zebra", str(prompt[2]))
-        self.assertTrue(self.state.registry.is_dir())
+
+    def test_the_runner_starts_only_after_the_orchestrator_exists(self) -> None:
+        self.write_playbook()
+        start(self.topic, self.state, self.herdr, cli="/x")
+        kinds = [c[0] for c in self.herdr.calls]
+        self.assertLess(kinds.index("agent_start"), kinds.index("pane_run"))
+
+    def test_start_refuses_a_playbook_without_yours_alone(self) -> None:
+        self.write_playbook("# Playbook\n\nAnything goes.\n")
+        with self.assertRaises(ValueError):
+            start(self.topic, self.state, self.herdr, cli="/x")
+        self.assertEqual(self.herdr.calls, [])
+
+    def test_start_refuses_a_leftover_workspace_without_its_orchestrator(self) -> None:
+        self.write_playbook()
+        self.herdr.workspace_list.append(Workspace("w7", "orch-zebra", None))
+        with self.assertRaises(RuntimeError):
+            start(self.topic, self.state, self.herdr, cli="/x")
+        self.assertEqual(self.herdr.of("workspace_create"), [])
+
+    def test_seat_on_an_unknown_workspace_says_so(self) -> None:
+        with self.assertRaisesRegex(ValueError, "w404"):
+            seat(self.topic, self.state, self.herdr, workspace_id="w404", branch="x", home="/home/u")
 
     def test_start_waits_for_a_startup_dialog_before_briefing(self) -> None:
+        self.write_playbook()
         self.herdr.ready_after_start = False
         said: list[str] = []
         self.assertTrue(start(self.topic, self.state, self.herdr, cli="/x", say=said.append))
@@ -71,6 +99,7 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual(len(self.herdr.of("prompt")), 1)
 
     def test_start_gives_up_without_briefing_when_the_dialog_is_never_answered(self) -> None:
+        self.write_playbook()
         self.herdr.ready_after_start = False
         self.herdr.becomes_ready = False
         self.assertFalse(start(self.topic, self.state, self.herdr, cli="/x", say=lambda m: None))

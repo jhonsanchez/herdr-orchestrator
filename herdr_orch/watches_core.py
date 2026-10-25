@@ -1,6 +1,5 @@
-"""The core Watches, as pure functions of what herdr reports and the time.
-
-The runner polls herdr and feeds these; every string they return becomes an Event.
+"""The core checks the runner makes beside a Topic's Watches, as pure functions
+of what herdr reports and the time. Every string they return becomes an Event.
 """
 
 from __future__ import annotations
