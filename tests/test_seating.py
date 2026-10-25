@@ -199,6 +199,19 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual(len(self.herdr.of("read_screen")), 1)
         self.assertEqual(len(self.herdr.of("prompt")), 1)
 
+    def test_the_orchestrator_runs_on_the_topics_model(self) -> None:
+        self.write_playbook()
+        start(self.topic, self.state, self.herdr, cli="/x", say=lambda m: None)
+        [(_, name, _, args)] = self.herdr.of("agent_start")
+        self.assertEqual((name, args), ("orch-zebra", ("--model", "sonnet")))
+
+    def test_orchestrator_model_overrides_the_topics_model(self) -> None:
+        self.write_playbook()
+        topic = Topic(name="zebra", dir=self.topic.dir, model="sonnet", orchestrator_model="opus")
+        start(topic, self.state, self.herdr, cli="/x", say=lambda m: None)
+        [(_, _, _, args)] = self.herdr.of("agent_start")
+        self.assertEqual(args, ("--model", "opus"))
+
     def test_start_does_nothing_when_the_orchestrator_already_runs(self) -> None:
         self.herdr.agent_list = [Agent("orch-zebra", "idle", "w5:p1", "w5")]
         start(self.topic, self.state, self.herdr, cli="/opt/plug/bin/herdr-orch")
