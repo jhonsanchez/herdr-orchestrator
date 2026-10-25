@@ -53,6 +53,9 @@ class FakeHerdr:
         self.calls.append(("agent_start", name, pane_id, tuple(args)))
         return self.ready_after_start
 
+    def focus(self, target: str) -> None:
+        self.calls.append(("focus", target))
+
     def plugin_config_dir(self) -> str | None:
         return None
 
