@@ -10,9 +10,12 @@ Glossary for herdr-orchestrator: how seated coding agents keep working while the
 - **Seating** — giving one piece of work its own worktree with an agent started in it, briefed by its Topic's brief.
 - **Membership** — which Topic an agent belongs to, decided by the Topic's repo-root patterns. An agent no Topic matches is shown to the user but never managed.
 - **Managed agent** — an agent its Orchestrator seated, or one handed over to it. Its questions and permission prompts become Escalations instead of reaching the user directly.
+- **Registry** — the record of which agents of a Topic are Managed. Taking an agent adds it; giving it back removes it.
 - **Handover** — the user passing one agent they seated to its Topic's Orchestrator, by name, until they take it back. Every agent that is not managed asks the user directly, as it always did.
 - **Escalation** — a Managed agent saying it needs a decision, a permission or a human. It goes to its Orchestrator first; only what the Playbook marks as the user's goes on to the user, with a recommended answer.
 - **Inbox** — the open Escalations of one Topic, owned by its Orchestrator.
 - **Attention pane** — the user's one view of every Topic's Inbox items that are theirs: grouped by workspace and agent, each with its options, the recommended one first. An answer given there goes straight to the agent.
 - **Watch** — a long-running check a Topic adds (an issue tracker, a merge gate, a budget). Every line it reports is an event for the Orchestrator, which alone decides what becomes an Escalation. The core keeps every Watch running.
-- **Unattended** — a Topic whose Orchestrator has stopped answering: no heartbeat within its window. Shown in the Attention pane and sent to the user once.
+- **Event** — one line a Watch reports. Events go to the Orchestrator, never straight to the user.
+- **Heartbeat** — the Orchestrator's regular sign that it is still answering.
+- **Unattended** — a Topic whose Orchestrator has stopped answering: no Heartbeat within its window. Shown in the Attention pane and sent to the user once.
