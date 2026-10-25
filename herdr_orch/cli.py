@@ -68,6 +68,7 @@ def main(
     sub.add_parser("take", help="hand an agent you seated over to its Topic's Orchestrator").add_argument("agent")
     sub.add_parser("give-back", help="take a handed-over agent back").add_argument("agent")
     sub.add_parser("is-managed", help="exit 0 when the calling pane's agent is Managed (for your own hooks)")
+    sub.add_parser("attention", help="the Attention pane: every Topic's items that need you")
     args = p.parse_args(argv)
 
     if args.cmd == "is-managed":
@@ -85,6 +86,14 @@ def main(
         return 0
 
     topics = load_topics(configs)
+    if args.cmd == "attention":
+        import curses
+
+        from herdr_orch.pane import App
+
+        os.environ.setdefault("ESCDELAY", "25")  # curses waits a full second after Esc otherwise
+        curses.wrapper(App(states, topics, herdr).run)
+        return 0
     if args.cmd in ("take", "give-back"):
         try:
             if args.cmd == "take":

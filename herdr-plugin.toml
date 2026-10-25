@@ -5,6 +5,19 @@ min_herdr_version = "0.9.5"
 description = "One Orchestrator per Topic for herdr agents: Seating, Watches, a Heartbeat and Escalations while you're away"
 platforms = ["linux", "macos"]
 
+[[panes]]
+id = "attention"
+title = "Attention"
+placement = "split"
+command = ["sh", "bin/herdr-orch", "attention"]
+
+[[actions]]
+id = "attention"
+title = "Open the Attention pane"
+description = "Every Topic's Inbox items that need you, with the recommended answer first"
+contexts = ["workspace", "tab", "pane"]
+command = ["sh", "-c", "exec \"${HERDR_BIN_PATH:-herdr}\" plugin pane open --plugin jhonsanchez.orchestrator --entrypoint attention"]
+
 [[actions]]
 id = "start"
 title = "Start this workspace's orchestrator"

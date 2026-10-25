@@ -39,6 +39,7 @@ class Herdr(Protocol):
     def agent_start(self, name: str, pane_id: str, args: list[str]) -> bool: ...
     def plugin_config_dir(self) -> str | None: ...
     def wait_ready(self, name: str, timeout_ms: int) -> bool: ...
+    def focus(self, target: str) -> None: ...
 
 
 def find_key(value: Any, key: str) -> str | None:
@@ -133,6 +134,9 @@ class CliHerdr:
                 return False
             raise
         return True
+
+    def focus(self, target: str) -> None:
+        self._json("agent", "focus", target)
 
     def plugin_config_dir(self) -> str | None:
         """Where herdr keeps this plugin's config; None when herdr can't say."""

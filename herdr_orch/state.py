@@ -112,6 +112,25 @@ class TopicState:
         with self.inbox.open("a") as f:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
+    def inbox_lines(self) -> list[dict[str, object]]:
+        if not self.inbox.exists():
+            return []
+        out = []
+        for raw in self.inbox.read_text().splitlines():
+            try:
+                out.append(json.loads(raw))
+            except json.JSONDecodeError:
+                continue  # a torn line from a concurrent writer
+        return out
+
+    def resolve(self, item_id: str, status: str, answer: str | None = None) -> None:
+        """Record an item's new state by appending it again with the same id."""
+        latest = next((i for i in reversed(self.inbox_lines()) if i.get("id") == item_id), None)
+        if latest is None:
+            return
+        with self.inbox.open("a") as f:
+            f.write(json.dumps({**latest, "status": status, "answer": answer}, ensure_ascii=False) + "\n")
+
     def touch_heartbeat(self, now: float) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.heartbeat.write_text(f"{now:.3f}\n")
