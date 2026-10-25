@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -56,6 +57,18 @@ def _ready(herdr: Herdr, name: str, pane: str, started: bool, say: Callable[[str
     return True
 
 
+def default_base(repo_root: str | None) -> str | None:
+    """The repo's default branch as origin/<name>, from origin/HEAD; None leaves the choice to herdr."""
+    if not repo_root:
+        return None
+    try:
+        out = subprocess.run(["git", "-C", repo_root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out.stdout.strip() or None if out.returncode == 0 else None
+
+
 def _stderr(message: str) -> None:
     print(message, file=sys.stderr)
 
@@ -82,7 +95,8 @@ def seat(
         raise ValueError(f"no herdr workspace {workspace_id}")
     repo = Path(ws.repo_root or ws.label).name
     path = f"{home}/.herdr/worktrees/{repo}/{branch}"
-    pane = herdr.worktree_create(workspace_id, branch, label or branch, path, topic.base)
+    base = topic.base or default_base(ws.repo_root)  # a Topic's base overrides each repo's own default
+    pane = herdr.worktree_create(workspace_id, branch, label or branch, path, base)
     for key, value in topic.env.items():
         herdr.pane_run(pane, f"export {key}={shlex.quote(expand_home(value, home))}")
     name = agent_name(branch)

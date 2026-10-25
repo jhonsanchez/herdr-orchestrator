@@ -41,6 +41,8 @@ class Herdr(Protocol):
     def plugin_config_dir(self) -> str | None: ...
     def wait_ready(self, name: str, timeout_ms: int) -> bool: ...
     def focus(self, target: str) -> None: ...
+    def open_setup(self, repo_root: str) -> None: ...
+    def notification(self, title: str, body: str) -> None: ...
 
 
 def find_key(value: Any, key: str) -> str | None:
@@ -142,6 +144,15 @@ class CliHerdr:
 
     def focus(self, target: str) -> None:
         self._json("agent", "focus", target)
+
+    def open_setup(self, repo_root: str) -> None:
+        """The setup wizard in a herdr popup: plugin actions have no terminal to ask in."""
+        # No --placement: the CLI flag has no popup value; the manifest's placement = "popup" applies.
+        self._json("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", "setup",
+                   "--env", f"HERDR_ORCH_SETUP_REPO={repo_root}")
+
+    def notification(self, title: str, body: str) -> None:
+        self._json("notification", "show", title, "--body", body)
 
     def plugin_config_dir(self) -> str | None:
         """Where herdr keeps this plugin's config; None when herdr can't say."""
