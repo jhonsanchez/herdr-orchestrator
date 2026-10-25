@@ -8,7 +8,9 @@ Readers treat a missing file as empty.
 
 from __future__ import annotations
 
+import json
 import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -90,6 +92,12 @@ class TopicState:
                 out.append(Event(at, parts[1], parts[2]))
         return out
 
+    # Inbox: one JSON object per line, format v1 (docs/inbox-v1.md).
+    def append_inbox(self, item: dict[str, object]) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        with self.inbox.open("a") as f:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
     def touch_heartbeat(self, now: float) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.heartbeat.write_text(f"{now:.3f}\n")
@@ -98,6 +106,16 @@ class TopicState:
         if not self.heartbeat.exists():
             return None
         return float(self.heartbeat.read_text().strip())
+
+
+def new_item(topic: str, agent: str, pane: str, kind: str, question: str, options: list[str],
+             now: float, guess: bool = False) -> dict[str, object]:
+    """An Inbox item, format v1."""
+    return {
+        "v": 1, "id": uuid.uuid4().hex[:12], "topic": topic, "agent": agent, "pane": pane, "kind": kind,
+        "question": question, "options": options, "guess": guess, "status": "open", "answer": None,
+        "created_at": now,
+    }
 
 
 def find_managed(root: Path, pane_id: str) -> tuple[str, str] | None:

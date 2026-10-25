@@ -1,0 +1,8 @@
+{
+  "name": "herdr-orchestrator",
+  "version": "0.1.0",
+  "description": "Routes a Managed herdr agent's questions and permission prompts to its Topic's Orchestrator instead of the user",
+  "author": { "name": "Jhon Sanchez" },
+  "repository": "https://github.com/jhonsanchez/herdr-orchestrator",
+  "license": "MIT"
+}
