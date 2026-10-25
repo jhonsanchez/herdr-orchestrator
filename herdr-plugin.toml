@@ -24,3 +24,10 @@ title = "Start this workspace's orchestrator"
 description = "Seat the orchestrator of the topic this workspace's repo belongs to"
 contexts = ["workspace", "tab", "pane"]
 command = ["sh", "bin/herdr-orch", "start"]
+
+[[actions]]
+id = "link"
+title = "Link herdr-orch into ~/.local/bin"
+description = "Point ~/.local/bin/herdr-orch at this installation, so scripts outside a plugin command have a stable path"
+contexts = ["workspace", "tab", "pane"]
+command = ["sh", "-c", "mkdir -p \"$HOME/.local/bin\" && ln -sfn \"$PWD/bin/herdr-orch\" \"$HOME/.local/bin/herdr-orch\""]

@@ -17,6 +17,12 @@ claude plugin marketplace add jhonsanchez/herdr-orchestrator
 claude plugin install herdr-orchestrator@herdr-orchestrator  # the routing hooks
 ```
 
+Herdr doesn't report where it installed a plugin, and keeps old installations after `herdr plugin update`. To get a stable path for scripts, run the `link` action once after installing and after each update; it points `~/.local/bin/herdr-orch` at the current installation:
+
+```sh
+herdr plugin action invoke jhonsanchez.orchestrator.link
+```
+
 The hooks change nothing for an agent that isn't Managed. For a Managed one:
 - an AskUserQuestion becomes Inbox items, and the dialog is refused with a reason the agent follows (validated in #4);
 - a permission prompt is recorded, and the agent still waits;
@@ -28,7 +34,7 @@ The format is in [docs/inbox-v1.md](docs/inbox-v1.md).
 A Topic is one rule set with its own account and credentials. Each Topic has its own Orchestrator. Create one with:
 
 ```sh
-~/.config/herdr/plugins/github/<install>/bin/herdr-orch init acme
+herdr-orch init acme   # after the link action above
 ```
 
 That creates `~/.config/herdr/plugins/config/jhonsanchez.orchestrator/topics/acme/` containing:

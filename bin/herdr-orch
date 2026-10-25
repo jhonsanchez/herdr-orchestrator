@@ -1,2 +1,4 @@
 #!/bin/sh
-exec env PYTHONPATH="$(dirname "$0")/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m herdr_orch.cli "$@"
+# Resolve symlinks (the `link` action puts one in ~/.local/bin) to find the checkout.
+self=$(readlink -f "$0")
+exec env PYTHONPATH="$(dirname "$self")/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m herdr_orch.cli "$@"
