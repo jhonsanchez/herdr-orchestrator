@@ -7,12 +7,11 @@ Detection is pure (it takes paths and the environment); asking goes through an
 from __future__ import annotations
 
 import re
-import shlex
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Callable, Mapping
 
-from herdr_orch.topics import NOTIFY_MODES, Answers, expand_home
+from herdr_orch.topics import NAME, Answers, expand_home, parse_notify
 
 Ask = Callable[[str, str], str]  # (question, default) -> answer; an empty answer means the default
 CHECKLIST = [
@@ -63,10 +62,22 @@ def _checklist(untick: str, extra: str) -> list[str]:
     return kept + [x.strip() for x in extra.split(";") if x.strip() and x.strip().lower() != "none"]
 
 
+def _free(name: str, taken: set[str] | frozenset[str]) -> str:
+    candidate, n = name, 2
+    while candidate in taken:
+        candidate, n = f"{name[:29]}-{n}", n + 1
+    return candidate
+
+
 def ask_answers(repo_root: str, repo_roots: list[str], env: Mapping[str, str], home: str, ask: Ask,
-                has_stop_hook: bool) -> tuple[str, Answers]:
+                has_stop_hook: bool, taken: set[str] | frozenset[str] = frozenset(),
+                name_default: str | None = None) -> tuple[str, Answers]:
     """The wizard's questions, each with its detected default. Returns the Topic name and Answers."""
-    name = ask("Topic name", suggest_name(repo_root))
+    suggestion = _free(name_default or suggest_name(repo_root), taken)
+    name = ask("Topic name", suggestion)
+    while name in taken or not NAME.match(name):
+        suggestion = _free(suggestion, taken | {name})
+        name = ask(f"'{name}' is taken or not a valid name (lowercase letters, digits, -). Topic name", suggestion)
     default_match = suggest_match(repo_root, home)
     match = ask(f"Repos (a pattern; {default_match} covers {len(matching_repos(default_match, repo_roots, home))} repos "
                 "open in herdr)", default_match)
@@ -79,6 +90,6 @@ def ask_answers(repo_root: str, repo_roots: list[str], env: Mapping[str, str], h
     numbered = "; ".join(f"{i}. {item}" for i, item in enumerate(CHECKLIST, 1))
     untick = ask(f"Yours alone, all ticked: {numbered}. Numbers to untick", "none")
     extra = ask("More items that are yours alone, separated by ';'", "none")
-    mode, command = (notify, None) if notify in NOTIFY_MODES else ("none", shlex.split(notify))
+    mode, command = parse_notify(notify)
     return name, Answers(match=[match], model=model, env=_account(env_answer), notify=mode,
                          notify_command=command, yours_alone=_checklist(untick, extra))

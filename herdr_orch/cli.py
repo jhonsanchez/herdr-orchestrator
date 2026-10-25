@@ -15,7 +15,6 @@ if sys.version_info < (3, 11):  # tomllib; macOS's /usr/bin/python3 is 3.9
 import argparse
 import json
 import os
-import shlex
 import signal
 import subprocess
 import time
@@ -30,7 +29,7 @@ from herdr_orch.runner import Runner
 from herdr_orch.seating import seat, start
 from herdr_orch.state import TopicState, find_managed, state_root
 from herdr_orch.supervisor import Supervisor
-from herdr_orch.topics import NOTIFY_MODES, Answers, Topic, config_root, init_topic, load_topic, load_topics, topic_for
+from herdr_orch.topics import Answers, Topic, parse_notify, config_root, init_topic, load_topic, load_topics, topic_for
 from herdr_orch.wizard import ask_answers
 
 CLI = str(Path(__file__).resolve().parent.parent / "bin" / "herdr-orch")
@@ -59,8 +58,11 @@ def resolve_topic(context_json: str, workspace_env: str, topics: list[Topic], he
 
 def _checkout_root(cwd: str = ".") -> str | None:
     """The main checkout of the git repo around cwd (a worktree resolves to its main checkout)."""
-    out = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                         capture_output=True, text=True)
+    try:
+        out = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     return str(Path(out.stdout.strip()).parent) if out.returncode == 0 and out.stdout.strip() else None
 
 
@@ -73,15 +75,23 @@ def _setup(configs: Path, states: Path, herdr: Herdr, env: Mapping[str, str], re
     """The wizard in a terminal: ask, write the Topic, send a test alert, then start its Orchestrator."""
     home = env.get("HOME") or str(Path.home())
     print(f"No Topic covers {repo_root} yet. Press Enter to take each suggestion.")
-    ask = _terminal_ask if name is None else (lambda q, d: _terminal_ask(q, name if q == "Topic name" else d))
     roots = [w.repo_root for w in herdr.workspaces() if w.repo_root]
-    topic_name, answers = ask_answers(repo_root, roots, env, home, ask, has_stop_hook=bool(stop_hooks(env)))
-    topic = load_topic(init_topic(configs, topic_name, answers))
+    taken = {t.name for t in load_topics(configs)}
+    topic_name, answers = ask_answers(repo_root, roots, env, home, _terminal_ask, has_stop_hook=bool(stop_hooks(env)),
+                                      taken=taken, name_default=name)
+    draft = Topic(name=topic_name, dir=configs / "topics" / topic_name, env=answers.env or {},
+                  notify=answers.notify or "none", notify_command=answers.notify_command or [])
+    if _terminal_ask("Send a test alert before saving?", "yes").lower().startswith("y"):
+        notifier_for(draft, env, herdr)("herdr-orchestrator test", f"alerts for Topic {topic_name} reach you")
+        if not _terminal_ask("Did it arrive?", "yes").lower().startswith("y"):
+            print("Saving anyway: change notify or notify_command in topic.toml, then run setup again to test.")
+    try:
+        topic = load_topic(init_topic(configs, topic_name, answers))
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
     TopicState(states, topic.name).ensure()
     print(f"Wrote {topic.dir}")
-    if _terminal_ask("Send a test alert now?", "yes").lower().startswith("y"):
-        notifier_for(topic, env)("herdr-orchestrator test", f"alerts for Topic {topic.name} reach you")
-        print("Sent. If nothing arrived, change notify in topic.toml.")
     if not then_start:
         return 0
     return 0 if start(topic, TopicState(states, topic.name), herdr, CLI) else 1
@@ -133,7 +143,11 @@ def main(
             repo = _checkout_root()
             if repo:
                 return _setup(configs, states, herdr, env, repo, name=args.topic, then_start=False)
-        print(init_topic(configs, args.topic, answers))
+        try:
+            print(init_topic(configs, args.topic, answers))
+        except (ValueError, FileExistsError) as e:
+            print(e, file=sys.stderr)
+            return 2
         TopicState(states, args.topic).ensure()
         return 0
 
@@ -204,12 +218,11 @@ def _answers(args: argparse.Namespace) -> Answers | None:
     """The init flags as Answers; None when none was given (the template as it ships)."""
     if not any((args.match, args.model, args.account, args.notify, args.yours_alone)):
         return None
-    notify, command = (args.notify, None) if args.notify in NOTIFY_MODES else ("none", shlex.split(args.notify or ""))
+    notify, command = parse_notify(args.notify or "")
     return Answers(
         match=args.match, model=args.model,
         env=dict(a.split("=", 1) for a in args.account) if args.account else None,
-        notify=notify if args.notify else None, notify_command=command or None,
-        yours_alone=args.yours_alone,
+        notify=notify, notify_command=command, yours_alone=args.yours_alone,
     )
 
 
@@ -223,7 +236,7 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGHUP, _stop)
     watches = Supervisor(topic.watches_dir)
-    runner = Runner(topic, state, herdr, watches, notifier_for(topic))
+    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr))
     try:
         while True:
             try:

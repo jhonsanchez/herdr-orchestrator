@@ -1,7 +1,7 @@
 import io
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from herdr_orch.cli import main
@@ -70,8 +70,20 @@ class AskAnswersTest(unittest.TestCase):
                               has_stop_hook=True)
         self.assertEqual(name, "side")
         self.assertEqual((a.match, a.model, a.env), (["~/code/*"], "opus", {"CLAUDE_CONFIG_DIR": "~/.claude-x"}))
-        self.assertEqual((a.notify, a.notify_command), ("none", ["ntfy-send", "-t", "me"]))
+        self.assertEqual((a.notify, a.notify_command), (None, ["ntfy-send", "-t", "me"]))
         self.assertEqual(a.yours_alone, [CHECKLIST[0], CHECKLIST[2], "Touching ADRs"])
+
+    def test_a_taken_name_is_asked_again_with_a_free_suggestion(self) -> None:
+        ask = Script("personal")
+        name, _ = ask_answers("/home/u/projects/personal/a", self.roots, {"HOME": "/home/u"}, "/home/u", ask,
+                              has_stop_hook=True, taken={"personal"})
+        self.assertEqual(name, "personal-2")
+        self.assertEqual(ask.asked[0][1], "personal-2")
+
+    def test_unticking_everything_leaves_no_items(self) -> None:
+        _, a = ask_answers("/home/u/projects/personal/a", self.roots, {"HOME": "/home/u"}, "/home/u",
+                           Script("", "", "", "", "", "1,2,3,4"), has_stop_hook=True)
+        self.assertEqual(a.yours_alone, [])
 
     def test_the_account_question_defaults_to_the_shells_account(self) -> None:
         ask = Script()
@@ -109,10 +121,25 @@ class InitWithFlagsTest(unittest.TestCase):
         self.assertIn("- Merging pull requests\n- Spending money\n", playbook)
         self.assertNotIn("Production: deploys", playbook)
 
+    def test_an_empty_checklist_empties_the_section_and_keeps_what_follows(self) -> None:
+        self.init("--match", "~/x/*")
+        t = load_topic(self.cfg / "topics/personal")
+        t.playbook_path.write_text(t.playbook_path.read_text() + "\n## Notes\n\nKeep me.\n")
+        from herdr_orch.topics import _with_yours_alone
+        out = _with_yours_alone(t.playbook_path.read_text(), [])
+        self.assertIn("## Yours alone", out)
+        self.assertNotIn("- Merging", out)
+        self.assertIn("## Notes\n\nKeep me.", out)
+
+    def test_a_secret_looking_env_is_refused(self) -> None:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["init", "personal", "--account", "GITHUB_TOKEN=abc"], self.env), 2)
+        self.assertFalse((self.cfg / "topics/personal").exists())
+
     def test_a_custom_notify_command_is_kept_as_a_command(self) -> None:
         self.init("--notify", "ntfy-send --topic me")
         t = load_topic(self.cfg / "topics/personal")
-        self.assertEqual((t.notify, t.notify_command), ("none", ["ntfy-send", "--topic", "me"]))
+        self.assertEqual(t.notify_command, ["ntfy-send", "--topic", "me"])
 
     def test_no_flags_and_no_terminal_still_scaffolds_the_template(self) -> None:
         self.init()

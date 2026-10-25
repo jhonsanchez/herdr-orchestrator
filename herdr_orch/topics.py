@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import tomllib
 from dataclasses import dataclass, field, fields
@@ -108,6 +109,15 @@ def topic_for_workspace(workspaces: list[Workspace], workspace_id: str, topics: 
 
 
 NOTIFY_MODES = ("stop-hook", "herdr", "none")
+SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIAL", re.IGNORECASE)
+
+
+def parse_notify(text: str) -> tuple[str | None, list[str] | None]:
+    """A push-alert answer: one of NOTIFY_MODES, or a command to run."""
+    text = text.strip()
+    if not text:
+        return None, None
+    return (text, None) if text in NOTIFY_MODES else (None, shlex.split(text))
 
 
 @dataclass(frozen=True)
@@ -133,22 +143,27 @@ def _topic_toml(a: Answers) -> str:
 
 
 def _with_yours_alone(playbook: str, items: list[str]) -> str:
+    """The playbook with its Yours alone list replaced; any section after it is kept."""
     head, _, rest = playbook.partition("## Yours alone")
-    intro = [line for line in rest.splitlines() if line.strip() and not line.startswith("- ")]
-    body = "\n".join(intro[:1])
-    return f"{head}## Yours alone\n\n{body}\n\n" + "".join(f"- {i}\n" for i in items)
+    section, sep, after = rest.partition("\n## ")
+    intro = next((line for line in section.splitlines() if line.strip() and not line.startswith("- ")), "")
+    out = f"{head}## Yours alone\n\n{intro}\n\n" + "".join(f"- {i}\n" for i in items)
+    return out + (f"\n## {after}" if sep else "")
 
 
 def init_topic(root: Path, name: str, answers: Answers | None = None) -> Path:
     if not NAME.match(name):
         raise ValueError(f"topic name must match {NAME.pattern}: {name!r}")
+    for key in (answers.env or {}) if answers else {}:
+        if SECRET_NAME.search(key):
+            raise ValueError(f"{key} looks like a secret: keep it in your shell or vault, never in a Topic")
     dest = root / "topics" / name
     if dest.exists():
         raise FileExistsError(dest)
     shutil.copytree(TEMPLATE, dest)
     if answers is not None:
         (dest / "topic.toml").write_text(_topic_toml(answers))
-        if answers.yours_alone:
+        if answers.yours_alone is not None:
             playbook = dest / "playbook.md"
             playbook.write_text(_with_yours_alone(playbook.read_text(), answers.yours_alone))
     return dest

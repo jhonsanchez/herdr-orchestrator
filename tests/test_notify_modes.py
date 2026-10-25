@@ -5,6 +5,7 @@ from pathlib import Path
 
 from herdr_orch.notify import notifier_for
 from herdr_orch.topics import Topic
+from tests.fakes import FakeHerdr
 
 
 class StopHookNotifyTest(unittest.TestCase):
@@ -41,6 +42,20 @@ class StopHookNotifyTest(unittest.TestCase):
         topic = Topic(name="personal", dir=self.root / "t", notify="stop-hook")
         notifier_for(topic, {"HOME": str(self.root / "nobody")})("t", "b")
         self.assertFalse(self.out.exists())
+
+    def test_a_topic_on_another_account_replays_that_accounts_hooks(self) -> None:
+        other = self.root / ".claude-other"
+        other.mkdir()
+        (other / "settings.json").write_text(json.dumps({"hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": f"echo other >> {self.out}"}]}]}}))
+        topic = Topic(name="z", dir=self.root / "t", notify="stop-hook", env={"CLAUDE_CONFIG_DIR": "~/.claude-other"})
+        notifier_for(topic, self.env)("t", "b")
+        self.assertEqual(self.out.read_text().strip(), "other")
+
+    def test_the_herdr_mode_shows_a_herdr_notification(self) -> None:
+        herdr = FakeHerdr()
+        notifier_for(Topic(name="p", dir=self.root / "t", notify="herdr"), self.env, herdr)("Title", "Body")
+        self.assertEqual(herdr.of("notification"), [("notification", "Title", "Body")])
 
     def test_a_notify_command_wins_over_the_mode(self) -> None:
         topic = Topic(name="personal", dir=self.root / "t", notify="stop-hook",

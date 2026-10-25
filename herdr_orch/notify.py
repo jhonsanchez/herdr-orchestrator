@@ -15,7 +15,8 @@ import sys
 from pathlib import Path
 from typing import Callable, Mapping
 
-from herdr_orch.topics import Topic
+from herdr_orch.herdr import CliHerdr, Herdr
+from herdr_orch.topics import Topic, expand_home
 
 Notify = Callable[[str, str], None]
 
@@ -59,23 +60,24 @@ def _via_stop_hooks(topic: str, env: Mapping[str, str]) -> Notify:
     return send
 
 
-def _via_herdr(env: Mapping[str, str]) -> Notify:
+def _via_herdr(herdr: Herdr) -> Notify:
     def send(title: str, body: str) -> None:
-        herdr = env.get("HERDR_BIN_PATH") or "herdr"
         try:
-            subprocess.run([herdr, "notification", "show", title, "--body", body], timeout=30, check=False,
-                           capture_output=True)
-        except (OSError, subprocess.TimeoutExpired) as e:
+            herdr.notification(title, body)
+        except Exception as e:  # an alert must never take its sender down
             print(f"herdr notification failed: {e}", file=sys.stderr)
 
     return send
 
 
-def notifier_for(topic: Topic, env: Mapping[str, str] = os.environ) -> Notify:
+def notifier_for(topic: Topic, env: Mapping[str, str] = os.environ, herdr: Herdr | None = None) -> Notify:
     if topic.notify_command:
         return notifier(topic.notify_command)
     if topic.notify == "stop-hook":
-        return _via_stop_hooks(topic.name, env)
+        # The Topic's own account wins: its agents run there, so its Stop hooks are the ones the wizard found.
+        home = env.get("HOME") or str(Path.home())
+        account = {k: expand_home(v, home) for k, v in topic.env.items()}
+        return _via_stop_hooks(topic.name, {**env, **account})
     if topic.notify == "herdr":
-        return _via_herdr(env)
+        return _via_herdr(herdr or CliHerdr())
     return notifier([])
