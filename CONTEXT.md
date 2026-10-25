@@ -18,4 +18,4 @@ Glossary for herdr-orchestrator: how seated coding agents keep working while the
 - **Watch** — a long-running check a Topic adds (an issue tracker, a merge gate, a budget). Every line it reports is an event for the Orchestrator, which alone decides what becomes an Escalation. The core keeps every Watch running.
 - **Event** — one line a Watch reports. Events go to the Orchestrator, never straight to the user.
 - **Heartbeat** — the Orchestrator's regular sign that it is still answering.
-- **Unattended** — a Topic whose Orchestrator has stopped answering: no Heartbeat within its window. Shown in the Attention pane and sent to the user once.
+- **Unattended** — a started Topic whose Orchestrator has stopped answering: it is gone, or Events have waited a whole window with no Heartbeat since they arrived. A quiet Topic is never Unattended just because nothing happened. Shown in the Attention pane and sent to the user once.

@@ -30,6 +30,24 @@ class BuildViewTest(unittest.TestCase):
         self.assertEqual(view.groups[0].rows[0].options, ["A (Recommended)", "B"])
         self.assertTrue(view.groups[0].rows[0].answerable)
 
+    def test_within_a_workspace_each_agents_items_stay_together(self) -> None:
+        agents = [Agent("a1", "idle", "w1:p1", "w1"), Agent("a2", "idle", "w1:p2", "w1")]
+        items = [item("x", "a1", "w1:p1", 100), item("y", "a2", "w1:p2", 200), item("z", "a1", "w1:p1", 300)]
+        view = build_view(items, agents, [Workspace("w1", "repo", None)], managed={"w1:p1", "w1:p2"}, topics=[], now=400)
+        self.assertEqual([r.item_id for r in view.rows()], ["x", "z", "y"])
+
+    def test_answerable_rows_offer_their_options_then_other(self) -> None:
+        view = build_view([item("a", "waki-1", "w1:p1", 1)], self.agents, self.workspaces, managed={"w1:p1", "w2:p1", "w3:p1"}, topics=[], now=2)
+        self.assertEqual(view.rows()[0].choices, ["A (Recommended)", "B", "Other…"])
+
+    def test_a_hidden_open_only_row_stays_hidden_until_the_agent_moves_on(self) -> None:
+        view = build_view([], self.agents, self.workspaces, managed={"w1:p1", "w2:p1"}, topics=[], now=0,
+                          hidden={("w3:p1", "blocked")})
+        self.assertEqual(view.rows(), [])
+        moved = [Agent("mine", "done", "w3:p1", "w3")]
+        view = build_view([], moved, self.workspaces, managed=set(), topics=[], now=0, hidden={("w3:p1", "blocked")})
+        self.assertEqual([r.kind for r in view.rows()], ["done"])
+
     def test_unmanaged_agents_that_are_blocked_or_done_are_open_only_rows(self) -> None:
         view = build_view([], self.agents, self.workspaces, managed={"w1:p1", "w2:p1"}, topics=[], now=0)
         [group] = view.groups

@@ -8,6 +8,7 @@ Readers treat a missing file as empty.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import uuid
@@ -28,6 +29,7 @@ def state_root(env: Mapping[str, str] = os.environ) -> Path:
 
 
 Kind = Literal["decision", "permission", "question"]
+Status = Literal["open", "resolved", "dismissed"]
 
 
 class Managed(NamedTuple):
@@ -108,8 +110,14 @@ class TopicState:
             "kind": kind, "question": question, "options": options, "guess": guess,
             "status": "open", "answer": None, "created_at": now,
         }
+        self._append_inbox(item)
+
+    def _append_inbox(self, item: dict[str, object]) -> None:
+        """One whole line per write, under a lock: the hooks, the Orchestrator and the
+        Attention pane all append to the same file."""
         self.dir.mkdir(parents=True, exist_ok=True)
         with self.inbox.open("a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
     def inbox_lines(self) -> list[dict[str, object]]:
@@ -123,13 +131,12 @@ class TopicState:
                 continue  # a torn line from a concurrent writer
         return out
 
-    def resolve(self, item_id: str, status: str, answer: str | None = None) -> None:
+    def resolve(self, item_id: str, status: Status, answer: str | None = None) -> None:
         """Record an item's new state by appending it again with the same id."""
         latest = next((i for i in reversed(self.inbox_lines()) if i.get("id") == item_id), None)
         if latest is None:
             return
-        with self.inbox.open("a") as f:
-            f.write(json.dumps({**latest, "status": status, "answer": answer}, ensure_ascii=False) + "\n")
+        self._append_inbox({**latest, "status": status, "answer": answer})
 
     def touch_heartbeat(self, now: float) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)

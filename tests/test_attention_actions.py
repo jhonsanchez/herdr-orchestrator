@@ -31,19 +31,27 @@ class AttentionActionsTest(unittest.TestCase):
     def test_load_builds_the_view_from_every_topic(self) -> None:
         view = load(self.root / "state", self.topics, self.herdr, now=200)
         [row] = view.rows()
-        self.assertEqual((row.agent, row.question, row.topic), ("waki-1", "Which color?", "waki"))
+        self.assertEqual((row.agent, row.text, row.topic), ("waki-1", "Which color?", "waki"))
         self.assertEqual(view.banners, [])
 
     def test_answering_prompts_the_agent_and_resolves_the_item(self) -> None:
         [row] = load(self.root / "state", self.topics, self.herdr, now=200).rows()
         answer(self.root / "state", row, "Red (Recommended)", self.herdr)
-        [(_, agent, text)] = self.herdr.of("prompt")
-        self.assertEqual(agent, "waki-1")
+        [(_, target, text)] = self.herdr.of("prompt")
+        self.assertEqual(target, "w1:p1")
         self.assertIn("Which color?", str(text))
         self.assertIn("Red (Recommended)", str(text))
         last = self.lines()[-1]
         self.assertEqual((last["status"], last["answer"], last["question"]), ("resolved", "Red (Recommended)", "Which color?"))
         self.assertEqual(load(self.root / "state", self.topics, self.herdr, now=300).rows(), [])
+
+    def test_an_answer_is_refused_when_another_agent_now_holds_the_pane(self) -> None:
+        [row] = load(self.root / "state", self.topics, self.herdr, now=200).rows()
+        self.herdr.agent_list = [Agent("someone-else", "idle", "w1:p1", "w1")]
+        with self.assertRaises(ValueError):
+            answer(self.root / "state", row, "Red", self.herdr)
+        self.assertEqual(self.herdr.of("prompt"), [])
+        self.assertEqual(self.lines()[-1]["status"], "open")
 
     def test_skipping_dismisses_without_prompting(self) -> None:
         [row] = load(self.root / "state", self.topics, self.herdr, now=200).rows()

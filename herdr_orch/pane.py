@@ -11,16 +11,17 @@ import textwrap
 from pathlib import Path
 from typing import Callable
 
-from herdr_orch.attention import Row, View, answer, dismiss, load, open_pane
+from herdr_orch.attention import OTHER, Row, View, answer, dismiss, load, open_pane
 from herdr_orch.herdr import Herdr
 from herdr_orch.topics import Topic
 
 REFRESH_MS = 2000
-OTHER = "Other…"
 ICONS = {"decision": "?", "question": "?", "permission": "!", "blocked": "◐", "done": "✓"}
 
 
 def _age(row: Row, now: float) -> str:
+    if row.created_at is None:
+        return "—"
     minutes = int((now - row.created_at) // 60)
     return f"{minutes // 60}h" if minutes >= 120 else f"{minutes}m"
 
@@ -33,20 +34,21 @@ class App:
         self.choosing = False
         self.option = 0
         self.message = ""
+        self.hidden: set[tuple[str, str]] = set()  # skipped open-only rows, as (pane, status)
 
     def refresh(self) -> None:
         try:
-            self.view = load(self.states, self.topics, self.herdr, self.now())
+            self.view = load(self.states, self.topics, self.herdr, self.now(), self.hidden)
         except Exception as e:  # herdr briefly unreachable: keep the last view
             self.message = f"refresh failed: {e}"
-        self.selected = min(self.selected, max(len(self.view.rows()) - 1, 0))
+        self.selected = min(self.selected, self.last())
+
+    def last(self) -> int:
+        return max(len(self.view.rows()) - 1, 0)
 
     def current(self) -> Row | None:
         rows = self.view.rows()
         return rows[self.selected] if rows else None
-
-    def choices(self, row: Row) -> list[str]:
-        return row.options + [OTHER] if row.answerable else []
 
     # Drawing
     def draw(self, scr: curses.window) -> None:
@@ -73,7 +75,7 @@ class App:
                 marker = "❯" if index == self.selected else " "
                 attr = curses.A_REVERSE if index == self.selected and not self.choosing else 0
                 guess = " (guess)" if row.guess else ""
-                put(f" {marker} {ICONS.get(row.kind, '·')} {row.agent:<16} {row.kind:<10} {_age(row, now):>4}  {row.question}{guess}", attr)
+                put(f" {marker} {ICONS.get(row.kind, '·')} {row.agent:<16} {row.kind:<10} {_age(row, now):>4}  {row.text}{guess}", attr)
                 index += 1
 
         detail_top = max(y + 1, height // 2)
@@ -84,9 +86,9 @@ class App:
         chosen = self.current()
         if chosen is not None:
             row = chosen
-            for line in textwrap.wrap(f"{row.agent} · {row.question}", width - 2) or [""]:
+            for line in textwrap.wrap(f"{row.agent} · {row.text}", width - 2) or [""]:
                 put(line, curses.A_BOLD)
-            for i, choice in enumerate(self.choices(row)):
+            for i, choice in enumerate(row.choices):
                 marker = "❯" if self.choosing and i == self.option else " "
                 attr = curses.A_REVERSE if self.choosing and i == self.option else 0
                 put(f" {marker} {i + 1}. {choice}", attr)
@@ -118,7 +120,7 @@ class App:
         row = self.current()
         self.message = ""
         if self.choosing and row is not None:
-            choices = self.choices(row)
+            choices = row.choices
             if key in (curses.KEY_UP, ord("k")):
                 self.option = (self.option - 1) % len(choices)
             elif key in (curses.KEY_DOWN, ord("j")):
@@ -144,7 +146,7 @@ class App:
         if key in (curses.KEY_UP, ord("k")):
             self.selected = max(self.selected - 1, 0)
         elif key in (curses.KEY_DOWN, ord("j")):
-            self.selected = min(self.selected + 1, max(len(self.view.rows()) - 1, 0))
+            self.selected = min(self.selected + 1, self.last())
         elif key == ord("r"):
             self.refresh()
         elif row is None:
@@ -157,8 +159,11 @@ class App:
             except Exception as e:
                 self.message = f"Could not open: {e}"
         elif key == ord("s"):
-            dismiss(self.states, row)
-            self.message = "Skipped." if row.item_id else "Nothing to skip: it clears when the agent moves on."
+            if row.item_id:
+                dismiss(self.states, row)
+            else:
+                self.hidden.add((row.pane, row.kind))  # back once the agent's status changes
+            self.message = "Skipped."
             self.refresh()
         return True
 
