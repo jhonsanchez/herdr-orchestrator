@@ -83,7 +83,8 @@ class CliHerdr:
 
     def prompt(self, agent: str, text: str) -> None:
         """Send, then check the prompt reached the screen: one sent while Claude is still
-        settling after a startup dialog can be swallowed. Resent once if it is missing."""
+        settling after a startup dialog can be swallowed. Resent once if it is missing;
+        RuntimeError if it never arrives (the runner then retries on its next tick)."""
         snippet = text.splitlines()[0][:30]
         for _ in range(2):
             self._json("agent", "prompt", agent, text)
@@ -92,6 +93,10 @@ class CliHerdr:
                 screen = self._run("agent", "read", agent, "--source", "recent-unwrapped", "--lines", "200").stdout
                 if snippet in screen:
                     return
+        raise RuntimeError(
+            f"the prompt never reached {agent}: it may be waiting at a dialog herdr doesn't recognise "
+            "(such as enabling a project's MCP servers); answer it in its pane"
+        )
 
     def workspaces(self) -> list[Workspace]:
         data = self._json("workspace", "list")

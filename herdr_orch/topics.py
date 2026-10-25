@@ -15,6 +15,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Mapping
 
+from herdr_orch.herdr import Workspace
 from herdr_orch.state import PLUGIN_ID
 
 TEMPLATE = Path(__file__).parent / "templates" / "topic"
@@ -96,6 +97,12 @@ def topic_for(repo_root: str, topics: list[Topic], home: str | None = None) -> T
             if fnmatch(repo_root, expand_home(pattern, home)):
                 return t
     return None
+
+
+def topic_for_workspace(workspaces: list[Workspace], workspace_id: str, topics: list[Topic], home: str | None = None) -> Topic | None:
+    """The Topic of a herdr workspace, by its repo root; None when no Topic matches or herdr has no repo for it."""
+    ws = next((w for w in workspaces if w.workspace_id == workspace_id), None)
+    return topic_for(ws.repo_root, topics, home) if ws and ws.repo_root else None
 
 
 def init_topic(root: Path, name: str) -> Path:
