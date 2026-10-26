@@ -214,7 +214,25 @@ class SeatingTest(unittest.TestCase):
         [(_, _, _, args)] = self.herdr.of("agent_start")
         self.assertEqual(args, ("--model", "opus"))
 
+    def test_start_resumes_and_briefs_an_orchestrator_seated_but_never_briefed(self) -> None:
+        self.write_playbook()
+        self.herdr.agent_list = [Agent("orch-zebra", "idle", "w5:p1", "w5")]
+        self.assertTrue(start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=lambda m: None))
+        self.assertEqual(self.herdr.of("agent_start"), [])
+        self.assertEqual(self.herdr.of("workspace_create"), [])
+        [prompt] = self.herdr.of("prompt")
+        self.assertIn(str(self.topic.playbook_path), str(prompt[2]))
+        self.assertTrue(self.state.briefed.exists())
+        start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=lambda m: None)
+        self.assertEqual(len(self.herdr.of("prompt")), 1)
+
+    def test_a_fresh_start_marks_briefed_after_the_brief_is_sent(self) -> None:
+        self.write_playbook()
+        start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn)
+        self.assertTrue(self.state.briefed.exists())
+
     def test_start_does_nothing_when_the_orchestrator_already_runs(self) -> None:
+        self.state.mark_briefed()
         self.herdr.agent_list = [Agent("orch-zebra", "idle", "w5:p1", "w5")]
         start(self.topic, self.state, self.herdr, cli="/opt/plug/bin/herdr-orch", spawn=self.spawn)
         self.assertEqual(self.herdr.calls, [])

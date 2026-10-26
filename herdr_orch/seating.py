@@ -164,23 +164,40 @@ def start(
     Watch runner running in the background. False when its startup dialog was never answered,
     so it was not briefed."""
     name = topic.orchestrator
-    if any(a.name == name for a in herdr.agents()):
-        return True
+    cmd = _orchestrator_cmd(cli, topic, state)
+    seated = next((a for a in herdr.agents() if a.name == name), None)
+    if seated is not None:
+        if state.briefed.exists():
+            return True
+        # A start that died after seating the Orchestrator left it unbriefed: finish the job.
+        spawn(cli, topic, state)  # a no-op while a runner is alive
+        return _brief(topic, state, herdr, cmd, seated.pane_id, True, say)
     if not topic.has_yours_alone():
         raise ValueError(f"{topic.playbook_path} needs a '## Yours alone' section before its Orchestrator starts")
     if any(w.label == name for w in herdr.workspaces()):
         raise RuntimeError(f"workspace {name} is open without its Orchestrator: close it, then start again")
     state.ensure()
+    state.clear_briefed()
     workspace_id, root_pane = herdr.workspace_create(str(topic.dir), name)
-    # The Orchestrator runs in an ordinary shell: hand it the roots this process resolved.
-    roots = f"HERDR_ORCH_CONFIG={shlex.quote(str(topic.config_root))} HERDR_ORCH_STATE={shlex.quote(str(state.root))}"
-    cmd = f"{roots} {shlex.quote(cli)}"
     model = topic.orchestrator_model or topic.model
     started = herdr.agent_start(name, root_pane, ["--model", model] if model else [])
     # The runner comes second: before the Orchestrator exists, it would report the Topic Unattended.
     spawn(cli, topic, state)
     herdr.attention_open(workspace_id, root_pane)
-    if not _ready(herdr, name, root_pane, started, say):
+    return _brief(topic, state, herdr, cmd, root_pane, started, say)
+
+
+def _orchestrator_cmd(cli: str, topic: Topic, state: TopicState) -> str:
+    """The Orchestrator runs in an ordinary shell: hand it the roots this process resolved."""
+    roots = f"HERDR_ORCH_CONFIG={shlex.quote(str(topic.config_root))} HERDR_ORCH_STATE={shlex.quote(str(state.root))}"
+    return f"{roots} {shlex.quote(cli)}"
+
+
+def _brief(topic: Topic, state: TopicState, herdr: Herdr, cmd: str, pane: str, started: bool,
+           say: Callable[[str], None]) -> bool:
+    """Send the Orchestrator its playbook prompt once it is ready, and mark it briefed."""
+    name = topic.orchestrator
+    if not _ready(herdr, name, pane, started, say):
         return False
     herdr.prompt(
         name,
@@ -189,6 +206,7 @@ def start(
         f"from herdr-orchestrator. Seat agents with: {cmd} seat {topic.name} --workspace <id> --branch <branch>. "
         f"After handling events, run: {cmd} heartbeat {topic.name}",
     )
+    state.mark_briefed()
     return True
 
 
