@@ -73,6 +73,11 @@ class Runner:
         statuses = {n: agents[n].status for n in names if n in agents}
         for text in agent_changes(self._prev, statuses, names):
             self.state.append_event("agents", text, now)
+        # A gone agent's Registry entry must not outlive it: herdr may hand its pane id to
+        # another session, which the hooks would then treat as Managed.
+        for pane, name in managed.items():
+            if name in self._prev and not any(a.name == name and a.pane_id == pane for a in agents.values()):
+                self.state.give_back(pane)
         self._prev = statuses
 
         for pane, name in managed.items():
