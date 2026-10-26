@@ -11,12 +11,14 @@ import re
 import time
 from typing import Callable, Protocol
 
+from herdr_orch.github import GitHub
 from herdr_orch.herdr import Herdr
 from herdr_orch.state import Event, TopicState
 from herdr_orch.topics import Topic
-from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations
+from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations, pr_change
 
 READY = ("idle", "done")
+PR_POLL_SECONDS = 120.0  # gh is slower and rate-limited next to herdr: ask about PRs less often than a tick
 # Spinner and timer lines change every second without any progress.
 NOISE = re.compile(r"^\s*$|[✻✶✢✽✳·*] [A-Z][a-z]+…|\([0-9]+m? ?[0-9]*s")
 
@@ -45,9 +47,11 @@ class Runner:
         watches: WatchSource,
         notify: Callable[[str, str], None],
         say: Callable[[str], None] = lambda line: None,
+        github: GitHub | None = None,
     ) -> None:
         self.topic, self.state, self.herdr, self.watches, self.notify = topic, state, herdr, watches, notify
-        self.say = say
+        self.say, self.github = say, github
+        self._pr_polled_at = float("-inf")
         self.orchestrator = topic.orchestrator
         self.stale = StaleTracker(topic.stale_min, topic.hung_min)
         self._prev: dict[str, str] = {}
@@ -88,6 +92,8 @@ class Runner:
                     self.state.append_event("stale", stale, now)
         self.stale.forget(names)
 
+        self._follow_prs(now)
+
         self.watches.poll(now)
         for watch, line in self.watches.lines():
             self.state.append_event(watch, line, now)
@@ -116,8 +122,27 @@ class Runner:
 
         pane_names = set(managed.values())
         status_of = {n: a.status for n, a in agents.items()}
-        for o in open_obligations(self.state.events_since(float("-inf")), self.state.inbox_lines(), status_of, pane_names):
+        for o in open_obligations(self.state.events_since(float("-inf")), self.state.inbox_lines(), status_of, pane_names,
+                                  self.state.tracked_branches()):
             key = (o.agent, o.opened_at)
             if now - o.opened_at >= self.topic.heartbeat_window_min * 60 and key not in self._chased:
                 self._chased.add(key)
-                self.notify(f"Topic {self.topic.name}: {o.agent} needs a follow-up", f"{o.agent} {o.reason} with no PR, report or Inbox item")
+                detail = o.reason if o.pr else f"{o.agent} {o.reason} with no PR, report or Inbox item"
+                self.notify(f"Topic {self.topic.name}: {o.agent} needs a follow-up", detail)
+
+    def _follow_prs(self, now: float) -> None:
+        """Report each tracked branch's PR changing, until the PR is merged or closed."""
+        if self.github is None or now - self._pr_polled_at < PR_POLL_SECONDS:
+            return
+        self._pr_polled_at = now
+        for branch in self.state.tracked_branches():
+            if branch.get("pr_state") in ("merged", "closed") or not branch.get("repo_root"):
+                continue
+            try:
+                pr = self.github.pr_for_branch(str(branch["repo_root"]), str(branch["branch"]))
+            except RuntimeError:
+                continue  # GitHub is unreachable or rate-limited: the PR's state is unknown, not changed
+            text = pr_change(branch, pr)
+            if pr is not None and text is not None:
+                self.state.append_event("pr", text, now)
+                self.state.set_pr(str(branch["branch"]), pr.number, pr.state, pr.checks, now)

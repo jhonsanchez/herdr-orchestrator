@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from herdr_orch.github import GitHub
 from herdr_orch.herdr import Herdr
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic, expand_home
@@ -69,6 +70,18 @@ def default_base(repo_root: str | None) -> str | None:
     return out.stdout.strip() or None if out.returncode == 0 else None
 
 
+def fetch_branch(repo_root: str | None, branch: str) -> bool:
+    """Whether origin has the branch; fetching it makes origin/<branch> available to base a worktree on."""
+    if not repo_root:
+        return False
+    try:
+        out = subprocess.run(["git", "-C", repo_root, "fetch", "-q", "origin", branch],
+                             capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.returncode == 0
+
+
 def _stderr(message: str) -> None:
     print(message, file=sys.stderr)
 
@@ -88,26 +101,39 @@ def seat(
     label: str | None = None,
     home: str | None = None,
     say: Callable[[str], None] = _stderr,
+    existing: bool = False,
+    now: Callable[[], float] = time.time,
 ) -> Seated:
+    """Seat an agent on a branch. `existing` seats it on a branch already pushed to origin,
+    so a PR left without an agent gets an owner again."""
     home = home or str(Path.home())
     ws = next((w for w in herdr.workspaces() if w.workspace_id == workspace_id), None)
     if ws is None:
         raise ValueError(f"no herdr workspace {workspace_id}")
     repo = Path(ws.repo_root or ws.label).name
     path = f"{home}/.herdr/worktrees/{repo}/{branch}"
-    base = topic.base or default_base(ws.repo_root)  # a Topic's base overrides each repo's own default
+    if existing:
+        if not fetch_branch(ws.repo_root, branch):
+            raise ValueError(f"origin has no branch {branch} to seat on: push it, or seat a new branch")
+        base: str | None = f"origin/{branch}"
+    else:
+        base = topic.base or default_base(ws.repo_root)  # a Topic's base overrides each repo's own default
     pane = herdr.worktree_create(workspace_id, branch, label or branch, path, base)
     for key, value in topic.env.items():
         herdr.pane_run(pane, f"export {key}={shlex.quote(expand_home(value, home))}")
     name = agent_name(branch)
     started = herdr.agent_start(name, pane, ["--model", topic.model] if topic.model else [])
     state.take(pane, name)
+    worktree_ws = next((a.workspace_id for a in herdr.agents() if a.pane_id == pane), None)
+    state.track_branch(branch, name, ws.repo_root, worktree_ws, now())
     if not _ready(herdr, name, pane, started, say):
         raise TimeoutError(f"{name} never got past its startup dialog; brief it by hand")
+    resume = (f" {branch} already has work pushed, and may have an open PR: start from `gh pr view` and `gh pr checks`, "
+              "answer any review feedback and fix any failing check on the same branch.") if existing else ""
     herdr.prompt(
         name,
         f"You are seated on {branch} for topic {topic.name}. Read your brief at {topic.brief_path} "
-        "and follow it, then start the work.",
+        f"and follow it, then start the work.{resume}",
     )
     return Seated(name, pane)
 
@@ -143,3 +169,18 @@ def start(topic: Topic, state: TopicState, herdr: Herdr, cli: str, say: Callable
         f"After handling events, run: {cmd} heartbeat {topic.name}",
     )
     return True
+
+
+def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str) -> None:
+    """Clean up a branch's workspace and worktree, once its PR is merged or closed.
+    An open PR keeps them: its agent, or its next one, still needs the checkout."""
+    record = state.branch_record(branch)
+    if record is None:
+        raise ValueError(f"{branch} is not tracked in Topic {state.topic}")
+    if record.get("repo_root"):
+        pr = github.pr_for_branch(str(record["repo_root"]), branch)  # RuntimeError if GitHub cannot say: keep it
+        if pr is not None and pr.state == "open":
+            raise RuntimeError(f"PR #{pr.number} for {branch} is still open: close or merge it first")
+    if record.get("workspace_id"):
+        herdr.worktree_remove(str(record["workspace_id"]))
+    state.untrack(branch)
