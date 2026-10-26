@@ -34,6 +34,8 @@ from herdr_orch.wizard import ask_answers
 
 CLI = str(Path(__file__).resolve().parent.parent / "bin" / "herdr-orch")
 TICK_SECONDS = 15.0
+# A quiet pane still shows it is alive: one line every 5 minutes.
+ALIVE_EVERY = 20
 
 
 def context_repo_root(context_json: str, workspace_env: str, herdr: Herdr) -> str | None:
@@ -236,11 +238,19 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGHUP, _stop)
     watches = Supervisor(topic.watches_dir)
-    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr))
+    def say(line: str) -> None:
+        print(line, flush=True)
+
+    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say)
+    say(f"Watch runner: topic {topic.name}")
     try:
+        ticks = 0
         while True:
             try:
                 runner.tick(now())
+                ticks += 1
+                if ticks % ALIVE_EVERY == 0:
+                    say(f"{time.strftime('%H:%M:%S')} watching, {ticks} ticks")
             except Exception:
                 # A failed herdr call must not end an unattended night: report it and tick again.
                 traceback.print_exc()

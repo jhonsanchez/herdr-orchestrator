@@ -46,6 +46,18 @@ class RunnerTest(unittest.TestCase):
     def texts(self) -> list[str]:
         return [e.text for e in self.state.events_since(0)]
 
+    def test_the_runner_says_a_line_when_a_tick_sees_events_and_is_silent_otherwise(self) -> None:
+        said: list[str] = []
+        runner = Runner(self.topic, self.state, self.herdr, self.watches, notify=lambda t, b: None, say=said.append)
+        self.state.take("w1:waki-1", "waki-1")
+        self.agents(**{"waki-1": "working"})
+        runner.tick(1000.0)
+        self.assertEqual(said, [])
+        self.agents(**{"waki-1": "blocked"})
+        runner.tick(1010.0)
+        self.assertEqual(len(said), 1)
+        self.assertIn("1 new event", said[0])
+
     def test_a_managed_agent_turning_blocked_becomes_an_event(self) -> None:
         self.state.take("w1:waki-1", "waki-1")
         self.agents(orch="working", **{"waki-1": "working"})

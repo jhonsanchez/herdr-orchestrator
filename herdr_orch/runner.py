@@ -44,8 +44,10 @@ class Runner:
         herdr: Herdr,
         watches: WatchSource,
         notify: Callable[[str, str], None],
+        say: Callable[[str], None] = lambda line: None,
     ) -> None:
         self.topic, self.state, self.herdr, self.watches, self.notify = topic, state, herdr, watches, notify
+        self.say = say
         self.orchestrator = topic.orchestrator
         self.stale = StaleTracker(topic.stale_min, topic.hung_min)
         self._prev: dict[str, str] = {}
@@ -57,6 +59,13 @@ class Runner:
         self._alerted = False
 
     def tick(self, now: float) -> None:
+        before = len(self.state.events_since(float("-inf")))
+        self._tick(now)
+        seen = len(self.state.events_since(float("-inf"))) - before
+        if seen > 0:
+            self.say(f"{time.strftime('%H:%M:%S', time.localtime(now))} {seen} new event{'s' * (seen != 1)}")
+
+    def _tick(self, now: float) -> None:
         agents = {a.name: a for a in self.herdr.agents() if a.name}
         managed = self.state.managed()  # pane -> agent name
         names = set(managed.values())
