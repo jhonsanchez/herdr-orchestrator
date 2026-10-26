@@ -238,7 +238,9 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGHUP, _stop)
     watches = Supervisor(topic.watches_dir)
-    say = lambda line: print(line, flush=True)
+    def say(line: str) -> None:
+        print(line, flush=True)
+
     runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say)
     say(f"Watch runner: topic {topic.name}")
     try:
