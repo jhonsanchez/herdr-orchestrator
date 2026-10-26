@@ -217,7 +217,7 @@ def main(
                 (a.pane_id for a in herdr.agents() if a.name == args.agent), None)
             if pane is None:
                 raise ValueError(f"no agent named {args.agent}")
-            state.escalate(args.agent, pane, args.kind, args.question, args.option, now())
+            state.escalate(args.agent, pane, args.kind, args.question, args.option, now(), to="orchestrator")
         elif args.cmd == "seat":
             seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"))
             print(f"{seated.name} {seated.pane_id}")

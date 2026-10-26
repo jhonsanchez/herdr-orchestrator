@@ -60,6 +60,7 @@ class Row:
     item_id: str | None = None
     topic: str | None = None
     guess: bool = False
+    to: str = "agent"  # who an answer is for: the asking agent, or the Orchestrator that raised it
 
     @property
     def answerable(self) -> bool:
@@ -126,7 +127,7 @@ def build_view(
     rows = [Row(
         agent=str(i["agent"]), pane=str(i["pane"]), kind=str(i["kind"]), text=str(i["question"]),
         options=[str(o) for o in i.get("options", [])], created_at=float(i["created_at"]),
-        item_id=str(i["id"]), topic=str(i["topic"]), guess=bool(i.get("guess")),
+        item_id=str(i["id"]), topic=str(i["topic"]), guess=bool(i.get("guess")), to=str(i.get("to", "agent")),
     ) for i in items]
     for f in followups:
         rows.append(Row(agent=f.agent, pane=f.pane, kind="followup", topic=f.topic, created_at=f.opened_at, options=[],
@@ -176,16 +177,29 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
     return build_view(items, agents, workspaces, managed, statuses, now, hidden, followups)
 
 
-def answer(states: Path, row: Row, text: str, herdr: Herdr) -> None:
-    """Send the user's answer straight to the agent's pane, then resolve the item.
-    Refused when another agent now holds that pane: the answer would reach the wrong one."""
+def answer(states: Path, row: Row, text: str, herdr: Herdr, orchestrator: str | None = None) -> str:
+    """Deliver the user's answer to whoever the item is for, then resolve it; returns who got it.
+    An agent's own question goes to its pane (refused when another agent now holds it: the
+    answer would reach the wrong one). A decision the Orchestrator raised goes to the
+    Orchestrator, whether or not the agent it is about is still around. Nothing resolves
+    unless delivery worked."""
     if not (row.item_id and row.topic):
         raise ValueError("only Inbox items can be answered")
-    holder = next((a.name for a in herdr.agents() if a.pane_id == row.pane), None)
-    if holder != row.agent:
-        raise ValueError(f"{row.agent} no longer holds pane {row.pane}; open it instead")
-    herdr.prompt(row.pane, f'Answer from the user to your question "{row.text}": {text}')
+    if row.to == "orchestrator":
+        if not orchestrator:
+            raise ValueError("this Topic has no Orchestrator to send the answer to")
+        herdr.prompt(orchestrator, (
+            f'The user answered Inbox item {row.item_id} ("{row.text}", about {row.agent}): {text}. '
+            "Act on it now: do what the answer authorises, or hold if it says to, and report the outcome."))
+        recipient = orchestrator
+    else:
+        holder = next((a.name for a in herdr.agents() if a.pane_id == row.pane), None)
+        if holder != row.agent:
+            raise ValueError(f"{row.agent} no longer holds pane {row.pane}; skip it or open it instead")
+        herdr.prompt(row.pane, f'Answer from the user to your question "{row.text}": {text}')
+        recipient = row.agent
     TopicState(states, row.topic).resolve(row.item_id, "resolved", text)
+    return recipient
 
 
 def dismiss(states: Path, row: Row) -> None:

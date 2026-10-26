@@ -133,10 +133,11 @@ class App:
                     text = self.ask_text(scr, "Your answer: ")
                 if text:
                     try:
-                        answer(self.states, row, text, self.herdr)
-                        self.message = f"Sent to {row.agent}."
+                        orch = next((t.orchestrator for t in self.topics if t.name == row.topic), None)
+                        sent_to = answer(self.states, row, text, self.herdr, orch)
+                        self.message = f"Sent to {sent_to}."
                     except Exception as e:
-                        self.message = f"Not sent: {e}"
+                        self.message = f"Not sent, item kept: {e}. [s] dismiss  [o] open pane"
                 self.choosing = False
                 self.refresh()
             return True

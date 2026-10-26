@@ -14,6 +14,7 @@ class FakeHerdr:
         self._n = 0
         self.ready_after_start = True
         self.becomes_ready = True
+        self.prompt_error: str | None = None  # when set, prompt() fails with it
         self.screens: dict[str, list[str]] = {}  # pane -> visible screens in turn; the last one stays
 
     def _pane(self) -> str:
@@ -32,6 +33,8 @@ class FakeHerdr:
         return shown.pop(0) if len(shown) > 1 else shown[0]
 
     def prompt(self, agent: str, text: str) -> None:
+        if self.prompt_error:
+            raise RuntimeError(self.prompt_error)
         self.calls.append(("prompt", agent, text))
 
     def workspaces(self) -> list[Workspace]:
