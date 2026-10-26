@@ -43,6 +43,7 @@ class Followup:
     reason: str
     opened_at: float
     window_min: int
+    pr: bool = False  # an open PR needs an owner or a fix
 
 
 OTHER = "Other…"
@@ -130,8 +131,10 @@ def build_view(
         item_id=str(i["id"]), topic=str(i["topic"]), guess=bool(i.get("guess")), to=str(i.get("to", "agent")),
     ) for i in items]
     for f in followups:
+        text = f"{f.reason}: needs a follow-up (re-seat {f.agent} or tell the user)" if f.pr else \
+            f"{f.agent} {f.reason}: needs a follow-up (PR, report or Inbox item)"
         rows.append(Row(agent=f.agent, pane=f.pane, kind="followup", topic=f.topic, created_at=f.opened_at, options=[],
-                        text=f"{f.agent} {f.reason}: needs a follow-up (PR, report or Inbox item)"))
+                        text=text))
     for a in agents:
         if a.pane_id not in managed and a.status in OPEN_ONLY and (a.pane_id, a.status) not in hidden:
             name = a.name or a.pane_id
@@ -165,8 +168,10 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
         pane_of = {name: pane for pane, name in state.managed().items()}
         registered = set(state.managed())
         managed |= registered
-        for o in open_obligations(state.events_since(float("-inf")), state.inbox_lines(), status_of, set(pane_of)):
-            followups.append(Followup(topic.name, o.agent, pane_of.get(o.agent, ""), o.reason, o.opened_at, topic.heartbeat_window_min))
+        for o in open_obligations(state.events_since(float("-inf")), state.inbox_lines(), status_of, set(pane_of),
+                                  state.tracked_branches()):
+            followups.append(Followup(topic.name, o.agent, pane_of.get(o.agent, ""), o.reason, o.opened_at,
+                                      topic.heartbeat_window_min, o.pr))
         heartbeat = state.heartbeat_at()
         waiting = state.events_since(heartbeat if heartbeat is not None else float("-inf"))
         pending_since = waiting[0].at if waiting else None

@@ -26,7 +26,8 @@ from herdr_orch.handover import give_back, take
 from herdr_orch.herdr import CliHerdr, Herdr, find_key
 from herdr_orch.notify import notifier_for, stop_hooks
 from herdr_orch.runner import Runner
-from herdr_orch.seating import seat, start
+from herdr_orch.github import CliGitHub
+from herdr_orch.seating import release, seat, start
 from herdr_orch.state import TopicState, find_managed, state_root
 from herdr_orch.supervisor import Supervisor
 from herdr_orch.topics import Answers, Topic, parse_notify, config_root, init_topic, load_topic, load_topics, topic_for
@@ -121,6 +122,11 @@ def main(
     seat_cmd.add_argument("--workspace", required=True)
     seat_cmd.add_argument("--branch", required=True)
     seat_cmd.add_argument("--label")
+    seat_cmd.add_argument("--existing", action="store_true",
+                          help="the branch is already pushed to origin: seat on it (an orphaned PR gets an owner again)")
+    release_cmd = sub.add_parser("release", help="remove a branch's workspace and worktree once its PR is merged or closed")
+    release_cmd.add_argument("topic")
+    release_cmd.add_argument("--branch", required=True)
     inbox_cmd = sub.add_parser("inbox", help="write Inbox items as the Orchestrator").add_subparsers(dest="inbox_cmd", required=True)
     add_cmd = inbox_cmd.add_parser("add", help="put a decision for the user in the Attention pane")
     add_cmd.add_argument("--topic", required=True)
@@ -219,8 +225,12 @@ def main(
                 raise ValueError(f"no agent named {args.agent}")
             state.escalate(args.agent, pane, args.kind, args.question, args.option, now(), to="orchestrator")
         elif args.cmd == "seat":
-            seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"))
+            seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"),
+                          existing=args.existing, now=now)
             print(f"{seated.name} {seated.pane_id}")
+        elif args.cmd == "release":
+            release(state, herdr, CliGitHub(), args.branch)
+            print(f"{args.branch} released")
         elif args.cmd == "watch":
             _watch(topic, state, herdr, now)
     except (ValueError, RuntimeError, TimeoutError) as e:
@@ -254,7 +264,7 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
     def say(line: str) -> None:
         print(line, flush=True)
 
-    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say)
+    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say, CliGitHub())
     say(f"Watch runner: topic {topic.name}")
     try:
         ticks = 0

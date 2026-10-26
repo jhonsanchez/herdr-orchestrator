@@ -51,6 +51,9 @@ class FakeHerdr:
         self.calls.append(("worktree_create", workspace_id, branch, label, path, base))
         return self._pane()
 
+    def worktree_remove(self, workspace_id: str) -> None:
+        self.calls.append(("worktree_remove", workspace_id))
+
     def pane_split(self, pane_id: str, cwd: str) -> str:
         self.calls.append(("pane_split", pane_id, cwd))
         return self._pane()

@@ -64,6 +64,10 @@ class TopicState:
         return self.dir / "events.log"
 
     @property
+    def branches(self) -> Path:
+        return self.dir / "branches"
+
+    @property
     def heartbeat(self) -> Path:
         return self.dir / "heartbeat"
 
@@ -82,6 +86,43 @@ class TopicState:
         if not self.registry.is_dir():
             return {}
         return {p.name: p.read_text().strip() for p in sorted(self.registry.iterdir()) if p.is_file()}
+
+    # Branches: one JSON file per branch a Managed agent works on, with its PR as last seen.
+    # It outlives the agent and its worktree: only `release` removes it.
+    def _branch_file(self, branch: str) -> Path:
+        return self.branches / (branch.replace("%", "%25").replace("/", "%2F") + ".json")
+
+    def track_branch(self, branch: str, agent: str, repo_root: str | None, workspace_id: str | None,
+                     now: float) -> None:
+        """Record who works on a branch. A re-seat keeps what is known of the PR."""
+        record = self.branch_record(branch) or {"branch": branch, "pr": None, "pr_state": None,
+                                                "checks": None, "pr_since": now}
+        record.update(agent=agent, repo_root=repo_root, workspace_id=workspace_id)
+        self._write_branch(record)
+
+    def set_pr(self, branch: str, pr: int | None, pr_state: str | None, checks: str | None, now: float) -> None:
+        record = self.branch_record(branch)
+        if record is not None:
+            self._write_branch({**record, "pr": pr, "pr_state": pr_state, "checks": checks, "pr_since": now})
+
+    def _write_branch(self, record: dict[str, object]) -> None:
+        self.branches.mkdir(parents=True, exist_ok=True)
+        path = self._branch_file(str(record["branch"]))
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record))
+        tmp.replace(path)
+
+    def branch_record(self, branch: str) -> dict[str, object] | None:
+        path = self._branch_file(branch)
+        return json.loads(path.read_text()) if path.is_file() else None
+
+    def tracked_branches(self) -> list[dict[str, object]]:
+        if not self.branches.is_dir():
+            return []
+        return [json.loads(p.read_text()) for p in sorted(self.branches.glob("*.json"))]
+
+    def untrack(self, branch: str) -> None:
+        self._branch_file(branch).unlink(missing_ok=True)
 
     # Events: one line per Event, "<epoch>\t<source>\t<text>".
     def append_event(self, source: str, text: str, now: float) -> None:

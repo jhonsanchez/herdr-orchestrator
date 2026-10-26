@@ -5,8 +5,9 @@ of what herdr reports and the time. Every string they return becomes an Event.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
+from herdr_orch.github import PullRequest
 from herdr_orch.state import Event
 
 REPORTED = ("blocked", "done")
@@ -82,8 +83,9 @@ def is_unattended(
 class Obligation:
     """A Managed agent that finished or stopped and has not been followed up."""
     agent: str
-    reason: str  # "done", "gone" or "stale (idle)"
+    reason: str  # "done", "gone", "stale (idle)", or what is wrong with an open PR
     opened_at: float
+    pr: bool = False  # the PR itself is the problem, not the agent's ending
 
 
 def _ending(event: Event) -> tuple[str, str] | None:
@@ -101,17 +103,22 @@ def open_obligations(
     inbox_items: list[dict[str, Any]],
     statuses: dict[str, str],
     managed: set[str],
+    branches: Sequence[dict[str, Any]] = (),
 ) -> list[Obligation]:
     """Every done, gone or stale Managed agent still owed a follow-up.
 
     An obligation opens at the agent's latest done or gone Event (else its first idle-stale
     one: a repeated stale alert never reopens it) and closes when an Inbox item for the agent,
     in any state, was written at or after that. It also ends when the agent works again or
-    is no longer Managed. Writing a chat message closes nothing."""
+    is no longer Managed. Writing a chat message closes nothing.
+
+    An agent whose branch has an open PR is judged by the PR instead (see `pr_obligation`):
+    the PR is its report, so finishing is no obligation, but an orphaned or failing PR is."""
+    open_prs = {str(b["agent"]) for b in branches if b.get("pr_state") == "open"}
     anchors: dict[str, Obligation] = {}
     for event in events:
         ending = _ending(event)
-        if ending is None:
+        if ending is None or ending[0] in open_prs:
             continue
         agent, reason = ending
         if reason != "gone" and agent not in managed:
@@ -120,8 +127,13 @@ def open_obligations(
         if reason == "stale (idle)" and held is not None:
             continue  # the first stale (or a done, gone) stands
         anchors[agent] = Obligation(agent, reason, event.at)
+    found = list(anchors.values())
+    for b in branches:
+        o = pr_obligation(b, statuses)
+        if o is not None:
+            found.append(o)
     out = []
-    for o in anchors.values():
+    for o in found:
         if o.reason == "gone" and o.agent in statuses:
             continue  # the name is back: seated again
         if statuses.get(o.agent) == "working" and o.reason != "gone":
@@ -130,3 +142,37 @@ def open_obligations(
             continue
         out.append(o)
     return sorted(out, key=lambda o: o.opened_at)
+
+
+def pr_obligation(branch: dict[str, Any], statuses: dict[str, str]) -> Obligation | None:
+    """What an open PR needs, if anything: an owner when its agent is gone, a fix when its
+    checks fail or when it has none. An agent still working on it is the owner it needs."""
+    if branch.get("pr_state") != "open":
+        return None
+    agent, number = str(branch["agent"]), branch["pr"]
+    status = statuses.get(agent)
+    if status is None:
+        reason = f"PR #{number} is open with no agent on it"
+    elif status == "working":
+        return None
+    elif branch.get("checks") == "failing":
+        reason = f"PR #{number} has failing checks"
+    elif branch.get("checks") == "none":
+        reason = f"PR #{number} has no checks"
+    else:
+        return None
+    return Obligation(agent, reason, float(branch["pr_since"]), pr=True)
+
+
+def pr_change(branch: dict[str, Any], pr: PullRequest | None) -> str | None:
+    """The Event for a branch's PR changing since it was last seen, if it did."""
+    if pr is None:
+        return None
+    label = f"PR #{pr.number} ({branch['branch']})"
+    if branch.get("pr") != pr.number:
+        return f"{label} {pr.state}, checks {pr.checks}"
+    if branch.get("pr_state") != pr.state:
+        return f"{label} {pr.state}" + ("; its workspace can be cleaned up" if pr.state != "open" else "")
+    if branch.get("checks") != pr.checks:
+        return f"{label} checks {pr.checks}"
+    return None
