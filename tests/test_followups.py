@@ -83,6 +83,7 @@ class FollowupFlowTest(unittest.TestCase):
         self.runner.tick(0)
         self.set("done")
         self.runner.tick(60)
+        self.runner.tick(120)
         [row] = self.view(120).rows()
         self.assertEqual((row.kind, row.agent), ("followup", "issue-1"))
         self.assertEqual(self.view(120).banners, [])

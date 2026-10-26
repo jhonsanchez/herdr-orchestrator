@@ -80,7 +80,12 @@ class SeatingTest(unittest.TestCase):
         )
         self.state = TopicState(root / "state", "zebra")
         self.herdr = FakeHerdr()
+        self.spawned: list[tuple[str, str]] = []
         self.herdr.workspace_list = [Workspace("w3", "zpc", "/home/u/projects/zebra/zpc")]
+
+    def spawn(self, cli: str, topic: Topic, state: TopicState) -> None:
+        self.spawned.append((cli, topic.name))
+        self.herdr.calls.append(("spawn",))
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -101,41 +106,38 @@ class SeatingTest(unittest.TestCase):
         self.topic.dir.mkdir(parents=True, exist_ok=True)
         self.topic.playbook_path.write_text(text)
 
-    def test_start_opens_workspace_runner_pane_and_orchestrator(self) -> None:
+    def test_start_opens_workspace_attention_pane_and_orchestrator_with_no_runner_pane(self) -> None:
         self.write_playbook()
-        start(self.topic, self.state, self.herdr, cli="/opt/plug/bin/herdr-orch")
+        start(self.topic, self.state, self.herdr, cli="/opt/plug/bin/herdr-orch", spawn=self.spawn)
         [(_, cwd, label)] = self.herdr.of("workspace_create")
         self.assertEqual(label, "orch-zebra")
-        [(_, runner_pane, cmd)] = self.herdr.of("pane_run")
-        self.assertEqual(
-            cmd,
-            f"clear; HERDR_ORCH_CONFIG={self.topic.dir.parent.parent} HERDR_ORCH_STATE={self.state.dir.parent.parent} "
-            "/opt/plug/bin/herdr-orch watch zebra",
-        )
+        self.assertEqual(self.herdr.of("pane_split"), [])
+        self.assertEqual(self.herdr.of("pane_run"), [])
+        self.assertEqual(self.spawned, [("/opt/plug/bin/herdr-orch", "zebra")])
         [(_, name, pane, args)] = self.herdr.of("agent_start")
         self.assertEqual(name, "orch-zebra")
-        self.assertNotEqual(pane, runner_pane)
+        self.assertEqual(self.herdr.of("attention_open"), [("attention_open", "w51", pane)])
         [prompt] = self.herdr.of("prompt")
         self.assertIn(str(self.topic.playbook_path), str(prompt[2]))
         self.assertIn(f"HERDR_ORCH_STATE={self.state.dir.parent.parent} /opt/plug/bin/herdr-orch heartbeat zebra", str(prompt[2]))
 
     def test_the_runner_starts_only_after_the_orchestrator_exists(self) -> None:
         self.write_playbook()
-        start(self.topic, self.state, self.herdr, cli="/x")
+        start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn)
         kinds = [c[0] for c in self.herdr.calls]
-        self.assertLess(kinds.index("agent_start"), kinds.index("pane_run"))
+        self.assertLess(kinds.index("agent_start"), kinds.index("spawn"))
 
     def test_start_refuses_a_playbook_without_yours_alone(self) -> None:
         self.write_playbook("# Playbook\n\nAnything goes.\n")
         with self.assertRaises(ValueError):
-            start(self.topic, self.state, self.herdr, cli="/x")
+            start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn)
         self.assertEqual(self.herdr.calls, [])
 
     def test_start_refuses_a_leftover_workspace_without_its_orchestrator(self) -> None:
         self.write_playbook()
         self.herdr.workspace_list.append(Workspace("w7", "orch-zebra", None))
         with self.assertRaises(RuntimeError):
-            start(self.topic, self.state, self.herdr, cli="/x")
+            start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn)
         self.assertEqual(self.herdr.of("workspace_create"), [])
 
     def test_seat_on_an_unknown_workspace_says_so(self) -> None:
@@ -146,7 +148,7 @@ class SeatingTest(unittest.TestCase):
         self.write_playbook()
         self.herdr.ready_after_start = False
         said: list[str] = []
-        self.assertTrue(start(self.topic, self.state, self.herdr, cli="/x", say=said.append))
+        self.assertTrue(start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=said.append))
         self.assertEqual(self.herdr.of("wait_ready"), [("wait_ready", "orch-zebra")])
         self.assertIn("orch-zebra", said[0])
         self.assertEqual(len(self.herdr.of("prompt")), 1)
@@ -155,7 +157,7 @@ class SeatingTest(unittest.TestCase):
         self.write_playbook()
         self.herdr.ready_after_start = False
         self.herdr.becomes_ready = False
-        self.assertFalse(start(self.topic, self.state, self.herdr, cli="/x", say=lambda m: None))
+        self.assertFalse(start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=lambda m: None))
         self.assertEqual(self.herdr.of("prompt"), [])
 
     def test_seat_waits_for_a_startup_dialog_too(self) -> None:
@@ -191,7 +193,7 @@ class SeatingTest(unittest.TestCase):
     def test_start_waits_out_the_mcp_screen_too(self) -> None:
         self.write_playbook()
         self.herdr.screens["w9:p1"] = [MCP_SCREEN, PROMPT]
-        self.assertTrue(start(self.topic, self.state, self.herdr, cli="/x", say=lambda m: None))
+        self.assertTrue(start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=lambda m: None))
         self.assertEqual(len(self.herdr.of("prompt")), 1)
 
     def test_a_clean_start_reads_the_screen_once_and_briefs(self) -> None:
@@ -201,20 +203,20 @@ class SeatingTest(unittest.TestCase):
 
     def test_the_orchestrator_runs_on_the_topics_model(self) -> None:
         self.write_playbook()
-        start(self.topic, self.state, self.herdr, cli="/x", say=lambda m: None)
+        start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=lambda m: None)
         [(_, name, _, args)] = self.herdr.of("agent_start")
         self.assertEqual((name, args), ("orch-zebra", ("--model", "sonnet")))
 
     def test_orchestrator_model_overrides_the_topics_model(self) -> None:
         self.write_playbook()
         topic = Topic(name="zebra", dir=self.topic.dir, model="sonnet", orchestrator_model="opus")
-        start(topic, self.state, self.herdr, cli="/x", say=lambda m: None)
+        start(topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=lambda m: None)
         [(_, _, _, args)] = self.herdr.of("agent_start")
         self.assertEqual(args, ("--model", "opus"))
 
     def test_start_does_nothing_when_the_orchestrator_already_runs(self) -> None:
         self.herdr.agent_list = [Agent("orch-zebra", "idle", "w5:p1", "w5")]
-        start(self.topic, self.state, self.herdr, cli="/opt/plug/bin/herdr-orch")
+        start(self.topic, self.state, self.herdr, cli="/opt/plug/bin/herdr-orch", spawn=self.spawn)
         self.assertEqual(self.herdr.calls, [])
 
 

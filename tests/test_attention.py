@@ -2,7 +2,9 @@ import unittest
 
 from herdr_orch.attention import TopicStatus, build_view, current_items
 from herdr_orch.herdr import Agent, Workspace
+from herdr_orch.state import RunnerStatus
 
+ALIVE = RunnerStatus(1, 16 * 60.0, 1)
 MIN = 60.0
 
 
@@ -66,11 +68,21 @@ class BuildViewTest(unittest.TestCase):
 
     def test_unattended_topics_get_a_banner(self) -> None:
         topics = [TopicStatus("waki", orchestrator_present=False, heartbeat_at=None, pending_since=None, window_min=15),
-                  TopicStatus("zebra", orchestrator_present=True, heartbeat_at=0, pending_since=10, window_min=15),
-                  TopicStatus("quiet", orchestrator_present=True, heartbeat_at=0, pending_since=None, window_min=15)]
+                  TopicStatus("zebra", orchestrator_present=True, heartbeat_at=0, pending_since=10, window_min=15, runner=ALIVE),
+                  TopicStatus("quiet", orchestrator_present=True, heartbeat_at=0, pending_since=None, window_min=15, runner=ALIVE)]
         view = build_view([], [], [], managed=set(), topics=topics, now=16 * MIN)
         self.assertEqual(view.banners, ["Topic waki is Unattended: its Orchestrator is not running",
                                         "Topic zebra is Unattended: Events unanswered for 15m"])
+
+    def test_a_dead_or_missing_runner_gets_a_banner_and_a_live_one_a_liveness_line(self) -> None:
+        topics = [TopicStatus("gone", True, 0, None, 15, runner=None),
+                  TopicStatus("stale", True, 0, None, 15, runner=RunnerStatus(1, 0.0, 9)),
+                  TopicStatus("live", True, 0, None, 15, runner=RunnerStatus(1, 100.0, 7)),
+                  TopicStatus("closed", False, None, None, 15, runner=None)]
+        view = build_view([], [], [], managed=set(), topics=topics, now=110.0)
+        self.assertEqual([b.split(":")[0] for b in view.banners],
+                         ["Topic closed is Unattended", "Topic gone", "Topic stale"])
+        self.assertEqual(view.status, ["Topic live: watching, 7 ticks, last 10s ago"])
 
 
 if __name__ == "__main__":

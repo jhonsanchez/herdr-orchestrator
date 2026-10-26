@@ -16,6 +16,7 @@ class AttentionActionsTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.state = TopicState(self.root / "state", "waki")
         self.state.take("w1:p1", "waki-1")
+        self.state.record_runner(1, 190, 3)
         self.state.escalate("waki-1", "w1:p1", "decision", "Which color?", ["Red (Recommended)", "Blue"], now=100)
         self.herdr = FakeHerdr()
         self.herdr.agent_list = [Agent("waki-1", "idle", "w1:p1", "w1"), Agent("orch-waki", "idle", "w2:p1", "w2")]

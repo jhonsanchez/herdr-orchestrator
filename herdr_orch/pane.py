@@ -64,6 +64,8 @@ class App:
 
         for banner in self.view.banners:
             put(f"⚠ {banner}", curses.A_BOLD | curses.color_pair(1))
+        for line in self.view.status:
+            put(f"· {line}", curses.A_DIM)
         rows = self.view.rows()
         if not rows:
             put("Nothing needs you.", curses.A_DIM)

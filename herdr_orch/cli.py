@@ -32,6 +32,7 @@ from herdr_orch.state import TopicState, find_managed, state_root
 from herdr_orch.supervisor import Supervisor
 from herdr_orch.topics import Answers, Topic, parse_notify, config_root, init_topic, load_topic, load_topics, topic_for
 from herdr_orch.wizard import ask_answers
+from herdr_orch.watches_core import RUNNER_STALE_S
 
 CLI = str(Path(__file__).resolve().parent.parent / "bin" / "herdr-orch")
 TICK_SECONDS = 15.0
@@ -251,13 +252,27 @@ def _answers(args: argparse.Namespace) -> Answers | None:
     )
 
 
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _stop(signum: int, frame: object) -> None:
     raise SystemExit(0)
 
 
 def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], float]) -> None:
-    """Runs until stopped. herdr requires plugins to stop their children on exit, so
-    SIGTERM and SIGHUP (the pane closing) stop the Watches too."""
+    """Runs until stopped, or until its Orchestrator has been gone a grace period. herdr requires
+    plugins to stop their children on exit, so SIGTERM and SIGHUP stop the Watches too."""
+    existing = state.runner_status()
+    if existing and existing.pid != os.getpid() and now() - existing.at < RUNNER_STALE_S and _alive(existing.pid):
+        print(f"a Watch runner for {topic.name} is already running (pid {existing.pid})", file=sys.stderr)
+        return
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGHUP, _stop)
     watches = Supervisor(topic.watches_dir)
@@ -278,11 +293,14 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
                 # A failed herdr call must not end an unattended night: report it and tick again.
                 traceback.print_exc()
                 watches.poll(now())
+            if runner.done:
+                break
             time.sleep(TICK_SECONDS)
     except KeyboardInterrupt:
         pass
     finally:
         watches.stop()
+        state.clear_runner(os.getpid())
 
 
 if __name__ == "__main__":
