@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import signal
+import subprocess
 import time
 import traceback
 from pathlib import Path
@@ -23,12 +24,13 @@ from typing import Any, Callable, Mapping, Sequence
 
 from herdr_orch.handover import give_back, take
 from herdr_orch.herdr import CliHerdr, Herdr, find_key
-from herdr_orch.notify import notifier
+from herdr_orch.notify import notifier_for, stop_hooks
 from herdr_orch.runner import Runner
 from herdr_orch.seating import seat, start
 from herdr_orch.state import TopicState, find_managed, state_root
 from herdr_orch.supervisor import Supervisor
-from herdr_orch.topics import Topic, config_root, init_topic, load_topics, topic_for, topic_for_workspace
+from herdr_orch.topics import Answers, Topic, parse_notify, config_root, init_topic, load_topic, load_topics, topic_for
+from herdr_orch.wizard import ask_answers
 
 CLI = str(Path(__file__).resolve().parent.parent / "bin" / "herdr-orch")
 TICK_SECONDS = 15.0
@@ -36,17 +38,65 @@ TICK_SECONDS = 15.0
 ALIVE_EVERY = 20
 
 
-def resolve_topic(context_json: str, workspace_env: str, topics: list[Topic], herdr: Herdr, home: str | None = None) -> Topic | None:
-    """The Topic of the workspace an action ran in: its repo root, matched by membership."""
+def context_repo_root(context_json: str, workspace_env: str, herdr: Herdr) -> str | None:
+    """The repo root of the workspace an action or pane ran in."""
     try:
         context = json.loads(context_json) if context_json else {}
     except json.JSONDecodeError:
         context = {}
     repo_root = find_key(context, "repo_root")
     if repo_root:
-        return topic_for(repo_root, topics, home)
+        return repo_root
     ws_id = find_key(context, "workspace_id") or workspace_env
-    return topic_for_workspace(herdr.workspaces(), ws_id, topics, home)
+    ws = next((w for w in herdr.workspaces() if w.workspace_id == ws_id), None)
+    return ws.repo_root if ws else None
+
+
+def resolve_topic(context_json: str, workspace_env: str, topics: list[Topic], herdr: Herdr, home: str | None = None) -> Topic | None:
+    """The Topic of the workspace an action ran in: its repo root, matched by membership."""
+    repo_root = context_repo_root(context_json, workspace_env, herdr)
+    return topic_for(repo_root, topics, home) if repo_root else None
+
+
+def _checkout_root(cwd: str = ".") -> str | None:
+    """The main checkout of the git repo around cwd (a worktree resolves to its main checkout)."""
+    try:
+        out = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return str(Path(out.stdout.strip()).parent) if out.returncode == 0 and out.stdout.strip() else None
+
+
+def _terminal_ask(question: str, default: str) -> str:
+    return input(f"{question} [{default}]: ").strip() or default
+
+
+def _setup(configs: Path, states: Path, herdr: Herdr, env: Mapping[str, str], repo_root: str,
+           name: str | None = None, then_start: bool = True) -> int:
+    """The wizard in a terminal: ask, write the Topic, send a test alert, then start its Orchestrator."""
+    home = env.get("HOME") or str(Path.home())
+    print(f"No Topic covers {repo_root} yet. Press Enter to take each suggestion.")
+    roots = [w.repo_root for w in herdr.workspaces() if w.repo_root]
+    taken = {t.name for t in load_topics(configs)}
+    topic_name, answers = ask_answers(repo_root, roots, env, home, _terminal_ask, has_stop_hook=bool(stop_hooks(env)),
+                                      taken=taken, name_default=name)
+    draft = Topic(name=topic_name, dir=configs / "topics" / topic_name, env=answers.env or {},
+                  notify=answers.notify or "none", notify_command=answers.notify_command or [])
+    if _terminal_ask("Send a test alert before saving?", "yes").lower().startswith("y"):
+        notifier_for(draft, env, herdr)("herdr-orchestrator test", f"alerts for Topic {topic_name} reach you")
+        if not _terminal_ask("Did it arrive?", "yes").lower().startswith("y"):
+            print("Saving anyway: change notify or notify_command in topic.toml, then run setup again to test.")
+    try:
+        topic = load_topic(init_topic(configs, topic_name, answers))
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    TopicState(states, topic.name).ensure()
+    print(f"Wrote {topic.dir}")
+    if not then_start:
+        return 0
+    return 0 if start(topic, TopicState(states, topic.name), herdr, CLI) else 1
 
 
 def main(
@@ -57,7 +107,13 @@ def main(
 ) -> int:
     p = argparse.ArgumentParser(prog="herdr-orch")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("init", help="scaffold a Topic").add_argument("topic")
+    init_cmd = sub.add_parser("init", help="create a Topic: asks in a terminal; flags answer without asking")
+    init_cmd.add_argument("topic")
+    init_cmd.add_argument("--match", action="append", help="repo-root pattern (repeatable)")
+    init_cmd.add_argument("--model")
+    init_cmd.add_argument("--account", action="append", metavar="KEY=VALUE", help="env a seated agent needs (repeatable)")
+    init_cmd.add_argument("--notify", help="stop-hook, herdr, none, or a command")
+    init_cmd.add_argument("--yours-alone", action="append", metavar="ITEM", help="never decided by the Orchestrator (repeatable)")
     start_cmd = sub.add_parser("start", help="seat a Topic's Orchestrator (Topic from the workspace when omitted)")
     start_cmd.add_argument("topic", nargs="?")
     seat_cmd = sub.add_parser("seat", help="seat an agent on a branch")
@@ -67,6 +123,7 @@ def main(
     seat_cmd.add_argument("--label")
     sub.add_parser("heartbeat", help="record the Orchestrator's Heartbeat").add_argument("topic")
     sub.add_parser("watch", help="run a Topic's Watch runner").add_argument("topic")
+    sub.add_parser("setup", help="the setup wizard for this repo's Topic, then start its Orchestrator")
     sub.add_parser("take", help="hand an agent you seated over to its Topic's Orchestrator").add_argument("agent")
     sub.add_parser("give-back", help="take a handed-over agent back").add_argument("agent")
     sub.add_parser("is-managed", help="exit 0 when the calling pane's agent is Managed (for your own hooks)")
@@ -83,7 +140,16 @@ def main(
         # Outside a plugin command, ask herdr rather than assume its default path.
         configs = Path(herdr.plugin_config_dir() or configs)
     if args.cmd == "init":
-        print(init_topic(configs, args.topic))
+        answers = _answers(args)
+        if answers is None and sys.stdin.isatty():
+            repo = _checkout_root()
+            if repo:
+                return _setup(configs, states, herdr, env, repo, name=args.topic, then_start=False)
+        try:
+            print(init_topic(configs, args.topic, answers))
+        except (ValueError, FileExistsError) as e:
+            print(e, file=sys.stderr)
+            return 2
         TopicState(states, args.topic).ensure()
         return 0
 
@@ -107,16 +173,30 @@ def main(
             print(e, file=sys.stderr)
             return 1
         return 0
-    if args.cmd == "start" and not args.topic:
-        topic = resolve_topic(env.get("HERDR_PLUGIN_CONTEXT_JSON", ""), env.get("HERDR_WORKSPACE_ID", ""), topics, herdr, env.get("HOME"))
-        if topic is None:
-            print("no Topic matches this workspace's repo", file=sys.stderr)
-            return 2
+    if args.cmd == "setup" or (args.cmd == "start" and not args.topic):
+        repo = (env.get("HERDR_ORCH_SETUP_REPO")
+                or context_repo_root(env.get("HERDR_PLUGIN_CONTEXT_JSON", ""), env.get("HERDR_WORKSPACE_ID", ""), herdr)
+                or _checkout_root())
+        found = topic_for(repo, topics, env.get("HOME")) if repo else None
+        if found is None:
+            if repo is None:
+                print("not in a git repo, and herdr names no workspace repo", file=sys.stderr)
+                return 2
+            if args.cmd == "setup" or sys.stdin.isatty():
+                return _setup(configs, states, herdr, env, repo)
+            herdr.open_setup(repo)  # a plugin action: no terminal here, so ask in a popup
+            print(f"No Topic covers {repo}: opened the setup wizard.")
+            return 0
+        topic = found
+        if args.cmd == "setup":
+            print(f"Topic {topic.name} already covers {repo}; starting it.")
+            args.cmd = "start"
     else:
-        topic = next((t for t in topics if t.name == args.topic), None)
-        if topic is None:
+        named = next((t for t in topics if t.name == args.topic), None)
+        if named is None:
             print(f"unknown Topic: {args.topic} (in {configs / 'topics'})", file=sys.stderr)
             return 2
+        topic = named
     state = TopicState(states, topic.name)
 
     try:
@@ -136,6 +216,18 @@ def main(
     return 0
 
 
+def _answers(args: argparse.Namespace) -> Answers | None:
+    """The init flags as Answers; None when none was given (the template as it ships)."""
+    if not any((args.match, args.model, args.account, args.notify, args.yours_alone)):
+        return None
+    notify, command = parse_notify(args.notify or "")
+    return Answers(
+        match=args.match, model=args.model,
+        env=dict(a.split("=", 1) for a in args.account) if args.account else None,
+        notify=notify, notify_command=command, yours_alone=args.yours_alone,
+    )
+
+
 def _stop(signum: int, frame: object) -> None:
     raise SystemExit(0)
 
@@ -147,7 +239,7 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
     signal.signal(signal.SIGHUP, _stop)
     watches = Supervisor(topic.watches_dir)
     say = lambda line: print(line, flush=True)
-    runner = Runner(topic, state, herdr, watches, notifier(topic.notify_command), say)
+    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say)
     say(f"Watch runner: topic {topic.name}")
     try:
         ticks = 0

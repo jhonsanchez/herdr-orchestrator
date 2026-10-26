@@ -1,9 +1,12 @@
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from herdr_orch.herdr import Agent, Workspace
-from herdr_orch.seating import agent_name, seat, start
+from herdr_orch import seating
+from herdr_orch.seating import agent_name, default_base, seat, start, startup_screen
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
 from tests.fakes import FakeHerdr
@@ -17,6 +20,56 @@ class AgentNameTest(unittest.TestCase):
         self.assertEqual(len(agent_name("x" * 50)), 32)
 
 
+MCP_SCREEN = """ 2 new MCP servers found in this project
+  Select any you wish to enable.
+  MCP servers may execute code or access system resources. All tool calls require approval.
+  ❯ [✔] ms365
+    [✔] trilium
+       Enable selected
+ Space to select · Esc to reject all"""
+TRUST_SCREEN = """ Quick safety check: Is this a project you created or one you trust? (Like your own code)
+ ❯ No, exit
+   Yes, I trust this folder"""
+PROMPT = """ ☀  Clear  0% of context
+❯ Try "how does <filepath> work?"
+  ⏵⏵ auto mode on (shift+tab to cycle)"""
+
+
+def cloned_repo(root: Path, default: str) -> Path:
+    """A clone of a bare repo whose default branch is `default`, so origin/HEAD is set."""
+    def run(*args: str) -> None:
+        subprocess.run(args, check=True, capture_output=True)
+
+    run("git", "init", "-q", "--bare", "-b", default, str(root / "remote.git"))
+    seed = root / "seed"
+    run("git", "init", "-q", "-b", default, str(seed))
+    run("git", "-C", str(seed), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
+    run("git", "-C", str(seed), "push", "-q", str(root / "remote.git"), default)
+    run("git", "clone", "-q", str(root / "remote.git"), str(root / "clone"))
+    return root / "clone"
+
+
+class DefaultBaseTest(unittest.TestCase):
+    def test_reads_the_repos_default_branch_from_origin_head(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(default_base(str(cloned_repo(Path(d), "trunk"))), "origin/trunk")
+
+    def test_a_repo_without_origin_head_leaves_it_to_herdr(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q", d], check=True)
+            self.assertIsNone(default_base(d))
+            self.assertIsNone(default_base(str(Path(d) / "missing")))
+
+
+class StartupScreenTest(unittest.TestCase):
+    def test_recognises_claudes_startup_screens(self) -> None:
+        self.assertEqual(startup_screen(MCP_SCREEN), "enable this project's MCP servers")
+        self.assertEqual(startup_screen(MCP_SCREEN.replace("2 new MCP servers", "1 new MCP server")), "enable this project's MCP servers")
+        self.assertEqual(startup_screen(TRUST_SCREEN), "trust this folder")
+        self.assertIsNone(startup_screen(PROMPT))
+
+
+@mock.patch.object(seating, "POLL_SECONDS", 0)
 class SeatingTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -110,6 +163,54 @@ class SeatingTest(unittest.TestCase):
         seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: None)
         self.assertEqual(self.herdr.of("wait_ready"), [("wait_ready", "falcon-12")])
         self.assertEqual(len(self.herdr.of("prompt")), 1)
+
+    def test_seat_without_a_topic_base_uses_the_repos_default_branch(self) -> None:
+        repo = cloned_repo(Path(self.tmp.name), "main")
+        self.herdr.workspace_list = [Workspace("w4", "x", str(repo))]
+        topic = Topic(name="personal", dir=self.topic.dir)
+        seat(topic, self.state, self.herdr, workspace_id="w4", branch="issue-3", home="/home/u")
+        [call] = self.herdr.of("worktree_create")
+        self.assertEqual(call[-1], "origin/main")
+
+    def test_seat_waits_out_the_mcp_screen_before_briefing(self) -> None:
+        self.herdr.screens["w9:p1"] = [MCP_SCREEN, MCP_SCREEN, PROMPT]
+        said: list[str] = []
+        seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=said.append)
+        self.assertEqual(said, ["falcon-12 is waiting at a startup screen (enable this project's MCP servers): answer it in its pane."])
+        self.assertEqual(len(self.herdr.of("read_screen")), 3)
+        kinds = [c[0] for c in self.herdr.calls]
+        self.assertLess(max(i for i, k in enumerate(kinds) if k == "read_screen"), kinds.index("prompt"))
+
+    def test_seat_gives_up_when_the_screen_never_clears(self) -> None:
+        self.herdr.screens["w9:p1"] = [MCP_SCREEN]
+        with mock.patch.object(seating, "DIALOG_TIMEOUT_SECONDS", 0.01):
+            with self.assertRaises(TimeoutError):
+                seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: None)
+        self.assertEqual(self.herdr.of("prompt"), [])
+
+    def test_start_waits_out_the_mcp_screen_too(self) -> None:
+        self.write_playbook()
+        self.herdr.screens["w9:p1"] = [MCP_SCREEN, PROMPT]
+        self.assertTrue(start(self.topic, self.state, self.herdr, cli="/x", say=lambda m: None))
+        self.assertEqual(len(self.herdr.of("prompt")), 1)
+
+    def test_a_clean_start_reads_the_screen_once_and_briefs(self) -> None:
+        seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: self.fail(m))
+        self.assertEqual(len(self.herdr.of("read_screen")), 1)
+        self.assertEqual(len(self.herdr.of("prompt")), 1)
+
+    def test_the_orchestrator_runs_on_the_topics_model(self) -> None:
+        self.write_playbook()
+        start(self.topic, self.state, self.herdr, cli="/x", say=lambda m: None)
+        [(_, name, _, args)] = self.herdr.of("agent_start")
+        self.assertEqual((name, args), ("orch-zebra", ("--model", "sonnet")))
+
+    def test_orchestrator_model_overrides_the_topics_model(self) -> None:
+        self.write_playbook()
+        topic = Topic(name="zebra", dir=self.topic.dir, model="sonnet", orchestrator_model="opus")
+        start(topic, self.state, self.herdr, cli="/x", say=lambda m: None)
+        [(_, _, _, args)] = self.herdr.of("agent_start")
+        self.assertEqual(args, ("--model", "opus"))
 
     def test_start_does_nothing_when_the_orchestrator_already_runs(self) -> None:
         self.herdr.agent_list = [Agent("orch-zebra", "idle", "w5:p1", "w5")]

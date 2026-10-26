@@ -25,17 +25,28 @@ The hooks change nothing for an agent that isn't Managed. For a Managed one:
 The format is in [docs/inbox-v1.md](docs/inbox-v1.md).
 
 ## Topics
-A Topic is one rule set with its own account and credentials. Each Topic has its own Orchestrator. Create one with:
+A Topic is one rule set with its own account and credentials. Each Topic has its own Orchestrator.
 
-```sh
-~/.config/herdr/plugins/github/<install>/bin/herdr-orch init acme
-```
+**You don't need to create one first.** Start an Orchestrator from a repo that no Topic covers, and the setup wizard asks for one. Every question has a detected default, so pressing Enter all the way through gives a working Topic:
 
-That creates `~/.config/herdr/plugins/config/jhonsanchez.orchestrator/topics/acme/` containing:
+| Question | Default |
+|---|---|
+| Name | the repo's parent folder (`~/projects/personal/x` → `personal`) |
+| Repos | that folder as a pattern, with how many repos open in herdr it covers |
+| Model | sonnet, for the Orchestrator and the agents it seats (`orchestrator_model` in `topic.toml` gives the Orchestrator its own) |
+| Claude account | what your shell uses (`CLAUDE_CONFIG_DIR` when set) |
+| Push alerts | `stop-hook`: your own Claude Stop hook, run with the alert as its message, so nothing is copied into the Topic. Without one, `herdr` (herdr's notification). Or `none`, or any command |
+| Yours alone | a pre-ticked checklist: merging, production, spending, secrets |
+
+It then offers a test alert and starts the Orchestrator. The `start` action opens the wizard in a herdr popup; in a terminal, `herdr-orch setup` (or `herdr-orch init <name>`, which doesn't start anything) asks inline. Every answer is also a flag, so `init` runs without questions: `herdr-orch init acme --match '~/code/*' --model sonnet --notify stop-hook --yours-alone 'Merging pull requests'`.
+
+There's no base-branch question: `seat` branches from each repo's own default branch (`origin/HEAD`). Set `base` in `topic.toml` only when a Topic branches from somewhere else.
+
+A Topic lives in `~/.config/herdr/plugins/config/jhonsanchez.orchestrator/topics/<name>/`:
 
 | File | What it holds |
 |---|---|
-| `topic.toml` | Only what differs from the defaults: `match` (repo-root patterns), `model`, `base`, `[env]`, `notify_command`, and the minute windows |
+| `topic.toml` | Only what differs from the defaults: `match` (repo-root patterns), `model`, `base`, `[env]`, `notify` (`stop-hook`, `herdr`, `none`) or `notify_command`, and the minute windows |
 | `playbook.md` | What this Topic's Orchestrator does. Its **Yours alone** section lists what it must never decide alone |
 | `brief.md` | The brief every agent seated for this Topic reads |
 | `watches/` | Any executable here is kept running, and each line it prints becomes an Event |
@@ -55,7 +66,7 @@ That creates `~/.config/herdr/plugins/config/jhonsanchez.orchestrator/topics/acm
   - your watches' output
 
   They reach the Orchestrator as a prompt when it's idle. When it finishes that turn, the runner records a Heartbeat.
-- **Unattended:** if the Orchestrator agent is missing, or Events wait a whole window with no Heartbeat, `notify_command` is called once, with the title and body on stdin.
+- **Unattended:** if the Orchestrator agent is missing, or Events wait a whole window with no Heartbeat, you get one alert: through `notify_command` (title and body on stdin) when set, else through the `notify` mode.
 
 State lives in `~/.local/state/herdr/plugins/jhonsanchez.orchestrator/topics/<topic>/` (`HERDR_ORCH_STATE` overrides it).
 
