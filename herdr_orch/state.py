@@ -78,6 +78,10 @@ class TopicState:
         return self.dir / "heartbeat"
 
     @property
+    def briefed(self) -> Path:
+        return self.dir / "briefed"
+
+    @property
     def runner(self) -> Path:
         return self.dir / "runner"
 
@@ -87,6 +91,14 @@ class TopicState:
 
     def ensure(self) -> None:
         self.registry.mkdir(parents=True, exist_ok=True)
+
+    # Briefed marker: present once the Orchestrator has been sent its playbook prompt.
+    def mark_briefed(self) -> None:
+        self.ensure()
+        self.briefed.write_text("")
+
+    def clear_briefed(self) -> None:
+        self.briefed.unlink(missing_ok=True)
 
     # Registry: one file per Managed agent's pane, holding the agent's name.
     def take(self, pane_id: str, agent: str) -> None:
