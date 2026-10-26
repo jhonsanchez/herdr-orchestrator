@@ -30,6 +30,7 @@ def state_root(env: Mapping[str, str] = os.environ) -> Path:
 
 Kind = Literal["decision", "permission", "question"]
 Status = Literal["open", "resolved", "dismissed"]
+Addressee = Literal["agent", "orchestrator"]
 
 
 class Managed(NamedTuple):
@@ -102,11 +103,11 @@ class TopicState:
                 out.append(Event(at, parts[1], parts[2]))
         return out
 
-    # Inbox: one JSON object per line, format v1 (docs/inbox-v1.md).
+    # Inbox: one JSON object per line, format v2 (docs/inbox-v1.md).
     def escalate(self, agent: str, pane: str, kind: Kind, question: str, options: list[str],
-                 now: float, guess: bool = False) -> None:
-        item = {
-            "v": 1, "id": uuid.uuid4().hex[:12], "topic": self.topic, "agent": agent, "pane": pane,
+                 now: float, guess: bool = False, to: Addressee = "agent") -> None:
+        item: dict[str, object] = {
+            "v": 2, "to": to, "id": uuid.uuid4().hex[:12], "topic": self.topic, "agent": agent, "pane": pane,
             "kind": kind, "question": question, "options": options, "guess": guess,
             "status": "open", "answer": None, "created_at": now,
         }

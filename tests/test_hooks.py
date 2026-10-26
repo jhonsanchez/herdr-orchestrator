@@ -53,7 +53,7 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(decision["permissionDecision"], "deny")
         self.assertEqual(decision["permissionDecisionReason"], DENY_REASON)
         first, second = self.items()
-        self.assertEqual(first["v"], 1)
+        self.assertEqual((first["v"], first["to"]), (2, "agent"))
         self.assertEqual((first["topic"], first["agent"], first["pane"], first["kind"]), ("waki", "waki-12", "w1:p2", "decision"))
         self.assertEqual(first["question"], "Which storage backend?")
         self.assertEqual(first["options"], ["SQLite (Recommended)", "Postgres"])
