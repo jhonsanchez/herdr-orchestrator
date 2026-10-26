@@ -60,6 +60,13 @@ class StaleTracker:
             del self._seen[name]
 
 
+RUNNER_STALE_S = 60.0  # a Watch runner that has not ticked this long (4 ticks) is dead or wedged
+
+
+def runner_down(now: float, runner_at: float | None) -> bool:
+    return runner_at is None or now - runner_at >= RUNNER_STALE_S
+
+
 def is_unattended(
     now: float,
     heartbeat_at: float | None,

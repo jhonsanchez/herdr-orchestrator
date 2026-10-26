@@ -12,6 +12,9 @@ from typing import Any, Literal, Protocol
 from herdr_orch.state import PLUGIN_ID
 
 
+ATTENTION_LABEL = "Attention"  # the title herdr gives the pane in herdr-plugin.toml
+
+
 @dataclass(frozen=True)
 class Agent:
     name: str | None
@@ -44,6 +47,8 @@ class Herdr(Protocol):
     def focus(self, target: str) -> None: ...
     def open_setup(self, repo_root: str) -> None: ...
     def notification(self, title: str, body: str) -> None: ...
+    def has_attention(self, workspace_id: str) -> bool: ...
+    def attention_open(self, workspace_id: str, target_pane: str) -> None: ...
 
 
 Delivery = Literal["answered", "pasted", "missing"]
@@ -188,6 +193,16 @@ class CliHerdr:
 
     def notification(self, title: str, body: str) -> None:
         self._json("notification", "show", title, "--body", body)
+
+    def has_attention(self, workspace_id: str) -> bool:
+        data = self._json("pane", "list", "--workspace", workspace_id)
+        return any(p.get("label") == ATTENTION_LABEL for p in data.get("result", {}).get("panes", []))
+
+    def attention_open(self, workspace_id: str, target_pane: str) -> None:
+        """The Attention pane in a right-hand column of the workspace, without taking focus."""
+        self._json("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", "attention",
+                   "--placement", "split", "--direction", "right", "--workspace", workspace_id,
+                   "--target-pane", target_pane, "--no-focus")
 
     def plugin_config_dir(self) -> str | None:
         """Where herdr keeps this plugin's config; None when herdr can't say."""

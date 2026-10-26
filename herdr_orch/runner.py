@@ -7,6 +7,7 @@ becomes Unattended.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import time
 from typing import Callable, Protocol
@@ -17,6 +18,7 @@ from herdr_orch.state import Event, TopicState
 from herdr_orch.topics import Topic
 from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations, pr_change
 
+GONE_GRACE_S = 60.0  # how long the Orchestrator may be missing before the runner gives up
 READY = ("idle", "done")
 PR_POLL_SECONDS = 120.0  # gh is slower and rate-limited next to herdr: ask about PRs less often than a tick
 # Spinner and timer lines change every second without any progress.
@@ -62,6 +64,9 @@ class Runner:
         self._delivering = False
         self._alerted = False
         self._chased: set[tuple[str, float]] = set()
+        self._missing_since: float | None = None
+        self.ticks = 0
+        self.done = False  # set once the Orchestrator has been gone a whole grace period
 
     def tick(self, now: float) -> None:
         before = len(self.state.events_since(float("-inf")))
@@ -129,6 +134,17 @@ class Runner:
                 self._chased.add(key)
                 detail = o.reason if o.pr else f"{o.agent} {o.reason} with no PR, report or Inbox item"
                 self.notify(f"Topic {self.topic.name}: {o.agent} needs a follow-up", detail)
+
+        # Closing the Orchestrator's workspace ends the Topic: stop, after the alert above had its chance.
+        if orch is None:
+            self._missing_since = self._missing_since if self._missing_since is not None else now
+            self.done = now - self._missing_since >= GONE_GRACE_S
+        else:
+            self._missing_since = None
+            if not self.herdr.has_attention(orch.workspace_id):
+                self.herdr.attention_open(orch.workspace_id, orch.pane_id)
+        self.ticks += 1
+        self.state.record_runner(os.getpid(), now, self.ticks)
 
     def _follow_prs(self, now: float) -> None:
         """Report each tracked branch's PR changing, until the PR is merged or closed."""

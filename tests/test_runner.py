@@ -150,6 +150,38 @@ class RunnerTest(unittest.TestCase):
         self.runner.tick(now=40 * MIN)
         self.assertEqual(self.texts(), ["waki-1 stale (idle) 40m"])
 
+    def test_a_missing_attention_pane_is_opened_beside_the_orchestrator_and_not_twice(self) -> None:
+        self.herdr.agent_list = [Agent("orch-waki", "idle", "w5:p1", "w5")]
+        self.runner.tick(0)
+        self.runner.tick(15)
+        self.assertEqual(self.herdr.of("attention_open"), [("attention_open", "w5", "w5:p1")])
+
+    def test_every_tick_records_the_runner_alive(self) -> None:
+        self.herdr.agent_list = [Agent("orch-waki", "idle", "w5:p1", "w5")]
+        self.runner.tick(10)
+        self.runner.tick(25)
+        status = self.state.runner_status()
+        assert status is not None
+        self.assertEqual((status.at, status.ticks), (25.0, 2))
+
+    def test_the_runner_is_done_once_the_orchestrator_is_gone_a_whole_grace_period(self) -> None:
+        self.herdr.agent_list = [Agent("orch-waki", "idle", "w5:p1", "w5")]
+        self.runner.tick(0)
+        self.herdr.agent_list = []
+        self.runner.tick(15)
+        self.assertEqual(len(self.notes), 1)  # the Unattended alert goes out before it stops
+        self.runner.tick(60)
+        self.assertFalse(self.runner.done)
+        self.runner.tick(75)
+        self.assertTrue(self.runner.done)
+
+    def test_clear_runner_only_removes_its_own_record(self) -> None:
+        self.state.record_runner(111, 0, 1)
+        self.state.clear_runner(222)
+        self.assertIsNotNone(self.state.runner_status())
+        self.state.clear_runner(111)
+        self.assertIsNone(self.state.runner_status())
+
 
 if __name__ == "__main__":
     unittest.main()

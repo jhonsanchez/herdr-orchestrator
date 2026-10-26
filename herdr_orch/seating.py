@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
@@ -138,9 +139,30 @@ def seat(
     return Seated(name, pane)
 
 
-def start(topic: Topic, state: TopicState, herdr: Herdr, cli: str, say: Callable[[str], None] = _stderr) -> bool:
-    """Seat the Orchestrator in its own workspace, with the Watch runner in a pane beside it.
-    False when its startup dialog was never answered, so it was not briefed."""
+def spawn_runner(cli: str, topic: Topic, state: TopicState) -> None:
+    """Run the Watch runner as a background process of its own, detached from this command.
+    herdr has no supervised background job for plugins, so the runner stops itself once its
+    Orchestrator is gone (see Runner.done) and on SIGTERM. Its output goes to runner.log."""
+    state.dir.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "HERDR_ORCH_CONFIG": str(topic.config_root), "HERDR_ORCH_STATE": str(state.root)}
+    with state.runner_log.open("ab") as log:
+        subprocess.Popen(
+            [cli, "watch", topic.name], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+            start_new_session=True,
+        )
+
+
+def start(
+    topic: Topic,
+    state: TopicState,
+    herdr: Herdr,
+    cli: str,
+    say: Callable[[str], None] = _stderr,
+    spawn: Callable[[str, Topic, TopicState], None] = spawn_runner,
+) -> bool:
+    """Seat the Orchestrator in its own workspace with the Attention pane beside it, and the
+    Watch runner running in the background. False when its startup dialog was never answered,
+    so it was not briefed."""
     name = topic.orchestrator
     if any(a.name == name for a in herdr.agents()):
         return True
@@ -149,16 +171,15 @@ def start(topic: Topic, state: TopicState, herdr: Herdr, cli: str, say: Callable
     if any(w.label == name for w in herdr.workspaces()):
         raise RuntimeError(f"workspace {name} is open without its Orchestrator: close it, then start again")
     state.ensure()
-    _, root_pane = herdr.workspace_create(str(topic.dir), name)
-    # The runner and the Orchestrator run in ordinary shells: hand them the roots this process resolved.
+    workspace_id, root_pane = herdr.workspace_create(str(topic.dir), name)
+    # The Orchestrator runs in an ordinary shell: hand it the roots this process resolved.
     roots = f"HERDR_ORCH_CONFIG={shlex.quote(str(topic.config_root))} HERDR_ORCH_STATE={shlex.quote(str(state.root))}"
     cmd = f"{roots} {shlex.quote(cli)}"
     model = topic.orchestrator_model or topic.model
     started = herdr.agent_start(name, root_pane, ["--model", model] if model else [])
     # The runner comes second: before the Orchestrator exists, it would report the Topic Unattended.
-    runner_pane = herdr.pane_split(root_pane, str(topic.dir))
-    # `clear` runs first, so the pane shows the runner's output, not the command typed into it.
-    herdr.pane_run(runner_pane, f"clear; {cmd} watch {topic.name}")
+    spawn(cli, topic, state)
+    herdr.attention_open(workspace_id, root_pane)
     if not _ready(herdr, name, root_pane, started, say):
         return False
     herdr.prompt(

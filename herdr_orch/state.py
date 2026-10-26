@@ -38,6 +38,12 @@ class Managed(NamedTuple):
     agent: str
 
 
+class RunnerStatus(NamedTuple):
+    pid: int
+    at: float
+    ticks: int
+
+
 @dataclass(frozen=True)
 class Event:
     at: float
@@ -70,6 +76,14 @@ class TopicState:
     @property
     def heartbeat(self) -> Path:
         return self.dir / "heartbeat"
+
+    @property
+    def runner(self) -> Path:
+        return self.dir / "runner"
+
+    @property
+    def runner_log(self) -> Path:
+        return self.dir / "runner.log"
 
     def ensure(self) -> None:
         self.registry.mkdir(parents=True, exist_ok=True)
@@ -188,6 +202,25 @@ class TopicState:
         if not self.heartbeat.exists():
             return None
         return float(self.heartbeat.read_text().strip())
+
+    # Watch runner liveness: "<pid> <epoch of its last tick> <ticks>", rewritten every tick.
+    def record_runner(self, pid: int, now: float, ticks: int) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.runner.with_suffix(".tmp")
+        tmp.write_text(f"{pid} {now:.3f} {ticks}\n")
+        tmp.replace(self.runner)
+
+    def runner_status(self) -> RunnerStatus | None:
+        try:
+            pid, at, ticks = self.runner.read_text().split()
+            return RunnerStatus(int(pid), float(at), int(ticks))
+        except (OSError, ValueError):
+            return None
+
+    def clear_runner(self, pid: int) -> None:
+        status = self.runner_status()
+        if status is not None and status.pid == pid:
+            self.runner.unlink(missing_ok=True)
 
 
 def find_managed(root: Path, pane_id: str) -> Managed | None:

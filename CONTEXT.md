@@ -15,7 +15,7 @@ Glossary for herdr-orchestrator: how seated coding agents keep working while the
 - **Escalation** — a Managed agent saying it needs a decision, a permission or a human. It goes to its Orchestrator first; only what the Playbook marks as the user's goes on to the user, with a recommended answer.
 - **Inbox** — the open Escalations of one Topic, owned by its Orchestrator.
 - **Attention pane** — the user's one view of every Topic's Inbox items that are theirs: grouped by workspace and agent, each with its options, the recommended one first. An answer given there goes straight to the agent.
-- **Watch** — a long-running check a Topic adds (an issue tracker, a merge gate, a budget). Every line it reports is an event for the Orchestrator, which alone decides what becomes an Escalation. The core keeps every Watch running.
+- **Watch** — a long-running check a Topic adds (an issue tracker, a merge gate, a budget). Every line it reports is an event for the Orchestrator, which alone decides what becomes an Escalation. The core keeps every Watch running, from a background Watch runner with no pane of its own.
 - **Event** — one line a Watch reports. Events go to the Orchestrator, never straight to the user.
 - **Heartbeat** — the Orchestrator's regular sign that it is still answering.
 - **Unattended** — a started Topic whose Orchestrator has stopped answering: it is gone, or Events have waited a whole window with no Heartbeat since they arrived. A quiet Topic is never Unattended just because nothing happened. Shown in the Attention pane and sent to the user once.

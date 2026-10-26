@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from herdr_orch.herdr import Agent, Herdr, Workspace
-from herdr_orch.state import TopicState
+from herdr_orch.state import RunnerStatus, TopicState
 from herdr_orch.topics import Topic
-from herdr_orch.watches_core import is_unattended, open_obligations
+from herdr_orch.watches_core import is_unattended, open_obligations, runner_down
 
 OPEN_ONLY = ("blocked", "done")  # herdr states worth a look on an agent no Orchestrator manages
 GONE = "(agent gone)"
@@ -32,6 +32,7 @@ class TopicStatus:
     heartbeat_at: float | None
     pending_since: float | None
     window_min: int
+    runner: RunnerStatus | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,7 @@ class Group:
 class View:
     groups: list[Group]
     banners: list[str]
+    status: list[str] = field(default_factory=list)  # liveness lines, shown dim
 
     def rows(self) -> list[Row]:
         return [r for g in self.groups for r in g.rows]
@@ -100,6 +102,16 @@ def _followup_banner(f: Followup, now: float) -> str | None:
     if now - f.opened_at < f.window_min * 60:
         return None
     return f"Topic {f.topic}: {f.agent} {f.reason} {int((now - f.opened_at) // 60)}m ago with no follow-up"
+
+
+def _runner_line(t: TopicStatus, now: float) -> tuple[str | None, str | None]:
+    """(banner, liveness line) for a Topic's Watch runner. A Topic whose Orchestrator is gone
+    already has its banner; the runner stops by itself then."""
+    if t.runner is not None and not runner_down(now, t.runner.at):
+        return None, f"Topic {t.name}: watching, {t.runner.ticks} ticks, last {int(now - t.runner.at)}s ago"
+    if not t.orchestrator_present:
+        return None, None
+    return f"Topic {t.name}: its Watch runner is not running, so no Events are collected", None
 
 
 def _when(row: Row) -> float:
@@ -149,7 +161,9 @@ def build_view(
         groups.setdefault(group_label(r.pane), Group(group_label(r.pane))).rows.append(r)
     banners = [b for b in (_banner(t, now) for t in topics) if b]
     banners += [b for b in (_followup_banner(f, now) for f in followups) if b]
-    return View(list(groups.values()), banners)
+    lines = [_runner_line(t, now) for t in topics]
+    banners += [b for b, _ in lines if b]
+    return View(list(groups.values()), banners, [s for _, s in lines if s])
 
 
 def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
@@ -178,7 +192,7 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
         # A Topic that was never started has nobody to be Unattended by.
         if waiting or registered or topic.orchestrator in present:
             statuses.append(TopicStatus(topic.name, topic.orchestrator in present, heartbeat,
-                                        pending_since, topic.heartbeat_window_min))
+                                        pending_since, topic.heartbeat_window_min, state.runner_status()))
     return build_view(items, agents, workspaces, managed, statuses, now, hidden, followups)
 
 

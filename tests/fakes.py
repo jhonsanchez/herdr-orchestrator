@@ -13,6 +13,7 @@ class FakeHerdr:
         self.calls: list[tuple[object, ...]] = []
         self._n = 0
         self.ready_after_start = True
+        self.attention: set[str] = set()
         self.becomes_ready = True
         self.prompt_error: str | None = None  # when set, prompt() fails with it
         self.screens: dict[str, list[str]] = {}  # pane -> visible screens in turn; the last one stays
@@ -73,6 +74,13 @@ class FakeHerdr:
 
     def focus(self, target: str) -> None:
         self.calls.append(("focus", target))
+
+    def has_attention(self, workspace_id: str) -> bool:
+        return workspace_id in self.attention
+
+    def attention_open(self, workspace_id: str, target_pane: str) -> None:
+        self.calls.append(("attention_open", workspace_id, target_pane))
+        self.attention.add(workspace_id)
 
     def plugin_config_dir(self) -> str | None:
         return None
