@@ -40,6 +40,11 @@ class ObligationsTest(unittest.TestCase):
         self.assertEqual(open_obligations(events, [], {"a": "working", "b": "working"}, {"a", "b"}), [])
         self.assertEqual(open_obligations(events, [], {}, set()), [])
 
+    def test_a_gone_agent_is_owed_although_its_registry_entry_is_removed(self) -> None:
+        events = [Event(10, "agents", "a gone")]
+        self.assertEqual([o.agent for o in open_obligations(events, [], {}, set())], ["a"])
+        self.assertEqual(open_obligations(events, [], {"a": "idle"}, set()), [])  # seated again
+        self.assertEqual(open_obligations(events, [item("a", 10)], {}, set()), [])
 
 class FollowupFlowTest(unittest.TestCase):
     def setUp(self) -> None:

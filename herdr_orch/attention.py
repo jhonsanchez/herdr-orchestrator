@@ -166,7 +166,7 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
         registered = set(state.managed())
         managed |= registered
         for o in open_obligations(state.events_since(float("-inf")), state.inbox_lines(), status_of, set(pane_of)):
-            followups.append(Followup(topic.name, o.agent, pane_of[o.agent], o.reason, o.opened_at, topic.heartbeat_window_min))
+            followups.append(Followup(topic.name, o.agent, pane_of.get(o.agent, ""), o.reason, o.opened_at, topic.heartbeat_window_min))
         heartbeat = state.heartbeat_at()
         waiting = state.events_since(heartbeat if heartbeat is not None else float("-inf"))
         pending_since = waiting[0].at if waiting else None

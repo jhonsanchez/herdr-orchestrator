@@ -111,15 +111,19 @@ def open_obligations(
     anchors: dict[str, Obligation] = {}
     for event in events:
         ending = _ending(event)
-        if ending is None or ending[0] not in managed:
+        if ending is None:
             continue
         agent, reason = ending
+        if reason != "gone" and agent not in managed:
+            continue  # a gone agent is deregistered by the runner, so its Registry entry proves nothing
         held = anchors.get(agent)
         if reason == "stale (idle)" and held is not None:
             continue  # the first stale (or a done, gone) stands
         anchors[agent] = Obligation(agent, reason, event.at)
     out = []
     for o in anchors.values():
+        if o.reason == "gone" and o.agent in statuses:
+            continue  # the name is back: seated again
         if statuses.get(o.agent) == "working" and o.reason != "gone":
             continue
         if any(i.get("agent") == o.agent and float(i["created_at"]) >= o.opened_at for i in inbox_items):
