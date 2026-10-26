@@ -93,7 +93,8 @@ def start(topic: Topic, state: TopicState, herdr: Herdr, cli: str, say: Callable
     started = herdr.agent_start(name, root_pane, [])
     # The runner comes second: before the Orchestrator exists, it would report the Topic Unattended.
     runner_pane = herdr.pane_split(root_pane, str(topic.dir))
-    herdr.pane_run(runner_pane, f"{cmd} watch {topic.name}")
+    # `clear` runs first, so the pane shows the runner's output, not the command typed into it.
+    herdr.pane_run(runner_pane, f"clear; {cmd} watch {topic.name}")
     if not _ready(herdr, name, started, say):
         return False
     herdr.prompt(

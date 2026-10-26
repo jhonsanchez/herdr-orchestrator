@@ -56,7 +56,7 @@ class SeatingTest(unittest.TestCase):
         [(_, runner_pane, cmd)] = self.herdr.of("pane_run")
         self.assertEqual(
             cmd,
-            f"HERDR_ORCH_CONFIG={self.topic.dir.parent.parent} HERDR_ORCH_STATE={self.state.dir.parent.parent} "
+            f"clear; HERDR_ORCH_CONFIG={self.topic.dir.parent.parent} HERDR_ORCH_STATE={self.state.dir.parent.parent} "
             "/opt/plug/bin/herdr-orch watch zebra",
         )
         [(_, name, pane, args)] = self.herdr.of("agent_start")
