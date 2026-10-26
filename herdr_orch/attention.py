@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from herdr_orch.herdr import Agent, Herdr, Workspace
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
-from herdr_orch.watches_core import is_unattended
+from herdr_orch.watches_core import is_unattended, open_obligations
 
 OPEN_ONLY = ("blocked", "done")  # herdr states worth a look on an agent no Orchestrator manages
 GONE = "(agent gone)"
@@ -31,6 +31,17 @@ class TopicStatus:
     orchestrator_present: bool
     heartbeat_at: float | None
     pending_since: float | None
+    window_min: int
+
+
+@dataclass(frozen=True)
+class Followup:
+    """A Managed agent that ended with no follow-up: shown until an Inbox item answers for it."""
+    topic: str
+    agent: str
+    pane: str
+    reason: str
+    opened_at: float
     window_min: int
 
 
@@ -83,6 +94,12 @@ def _banner(t: TopicStatus, now: float) -> str | None:
     return f"Topic {t.name} is Unattended: Events unanswered for {waited}m"
 
 
+def _followup_banner(f: Followup, now: float) -> str | None:
+    if now - f.opened_at < f.window_min * 60:
+        return None
+    return f"Topic {f.topic}: {f.agent} {f.reason} {int((now - f.opened_at) // 60)}m ago with no follow-up"
+
+
 def _when(row: Row) -> float:
     return row.created_at if row.created_at is not None else float("inf")
 
@@ -95,6 +112,7 @@ def build_view(
     topics: list[TopicStatus],
     now: float,
     hidden: set[tuple[str, str]] = frozenset(),  # type: ignore[assignment]
+    followups: Sequence[Followup] = (),
 ) -> View:
     """Rows grouped by workspace, then agent, oldest first. `hidden` holds (pane, status)
     pairs the user skipped; such a row returns once that agent's status changes."""
@@ -110,6 +128,9 @@ def build_view(
         options=[str(o) for o in i.get("options", [])], created_at=float(i["created_at"]),
         item_id=str(i["id"]), topic=str(i["topic"]), guess=bool(i.get("guess")),
     ) for i in items]
+    for f in followups:
+        rows.append(Row(agent=f.agent, pane=f.pane, kind="followup", topic=f.topic, created_at=f.opened_at, options=[],
+                        text=f"{f.agent} {f.reason}: needs a follow-up (PR, report or Inbox item)"))
     for a in agents:
         if a.pane_id not in managed and a.status in OPEN_ONLY and (a.pane_id, a.status) not in hidden:
             name = a.name or a.pane_id
@@ -123,6 +144,7 @@ def build_view(
     for r in sorted(rows, key=lambda r: (oldest[r.pane], r.pane, _when(r))):
         groups.setdefault(group_label(r.pane), Group(group_label(r.pane))).rows.append(r)
     banners = [b for b in (_banner(t, now) for t in topics) if b]
+    banners += [b for b in (_followup_banner(f, now) for f in followups) if b]
     return View(list(groups.values()), banners)
 
 
@@ -133,12 +155,17 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
     present = {a.name for a in agents if a.name}
     items: list[dict[str, Any]] = []
     managed: set[str] = set()
+    followups: list[Followup] = []
+    status_of = {a.name: a.status for a in agents if a.name}
     statuses = []
     for topic in topics:
         state = TopicState(states, topic.name)
         items += current_items(state.inbox_lines())
+        pane_of = {name: pane for pane, name in state.managed().items()}
         registered = set(state.managed())
         managed |= registered
+        for o in open_obligations(state.events_since(float("-inf")), state.inbox_lines(), status_of, set(pane_of)):
+            followups.append(Followup(topic.name, o.agent, pane_of[o.agent], o.reason, o.opened_at, topic.heartbeat_window_min))
         heartbeat = state.heartbeat_at()
         waiting = state.events_since(heartbeat if heartbeat is not None else float("-inf"))
         pending_since = waiting[0].at if waiting else None
@@ -146,7 +173,7 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
         if waiting or registered or topic.orchestrator in present:
             statuses.append(TopicStatus(topic.name, topic.orchestrator in present, heartbeat,
                                         pending_since, topic.heartbeat_window_min))
-    return build_view(items, agents, workspaces, managed, statuses, now, hidden)
+    return build_view(items, agents, workspaces, managed, statuses, now, hidden, followups)
 
 
 def answer(states: Path, row: Row, text: str, herdr: Herdr) -> None:

@@ -121,6 +121,13 @@ def main(
     seat_cmd.add_argument("--workspace", required=True)
     seat_cmd.add_argument("--branch", required=True)
     seat_cmd.add_argument("--label")
+    inbox_cmd = sub.add_parser("inbox", help="write Inbox items as the Orchestrator").add_subparsers(dest="inbox_cmd", required=True)
+    add_cmd = inbox_cmd.add_parser("add", help="put a decision for the user in the Attention pane")
+    add_cmd.add_argument("--topic", required=True)
+    add_cmd.add_argument("--agent", required=True)
+    add_cmd.add_argument("--question", required=True)
+    add_cmd.add_argument("--option", action="append", default=[], help="a choice, the recommended one first (repeatable)")
+    add_cmd.add_argument("--kind", choices=("decision", "question"), default="decision")
     sub.add_parser("heartbeat", help="record the Orchestrator's Heartbeat").add_argument("topic")
     sub.add_parser("watch", help="run a Topic's Watch runner").add_argument("topic")
     sub.add_parser("setup", help="the setup wizard for this repo's Topic, then start its Orchestrator")
@@ -205,6 +212,12 @@ def main(
         elif args.cmd == "start":
             if not start(topic, state, herdr, CLI):
                 return 1
+        elif args.cmd == "inbox":
+            pane = next((p for p, n in state.managed().items() if n == args.agent), None) or next(
+                (a.pane_id for a in herdr.agents() if a.name == args.agent), None)
+            if pane is None:
+                raise ValueError(f"no agent named {args.agent}")
+            state.escalate(args.agent, pane, args.kind, args.question, args.option, now())
         elif args.cmd == "seat":
             seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"))
             print(f"{seated.name} {seated.pane_id}")

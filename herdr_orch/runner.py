@@ -14,7 +14,7 @@ from typing import Callable, Protocol
 from herdr_orch.herdr import Herdr
 from herdr_orch.state import Event, TopicState
 from herdr_orch.topics import Topic
-from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended
+from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations
 
 READY = ("idle", "done")
 # Spinner and timer lines change every second without any progress.
@@ -57,6 +57,7 @@ class Runner:
         self._delivered_upto = heartbeat if heartbeat is not None else float("-inf")
         self._delivering = False
         self._alerted = False
+        self._chased: set[tuple[str, float]] = set()
 
     def tick(self, now: float) -> None:
         before = len(self.state.events_since(float("-inf")))
@@ -112,3 +113,11 @@ class Runner:
             reason = "its Orchestrator is not running" if orch is None else f"{len(waiting)} Events unanswered"
             self.notify(f"Topic {self.topic.name} is Unattended", reason)
         self._alerted = unattended
+
+        pane_names = set(managed.values())
+        status_of = {n: a.status for n, a in agents.items()}
+        for o in open_obligations(self.state.events_since(float("-inf")), self.state.inbox_lines(), status_of, pane_names):
+            key = (o.agent, o.opened_at)
+            if now - o.opened_at >= self.topic.heartbeat_window_min * 60 and key not in self._chased:
+                self._chased.add(key)
+                self.notify(f"Topic {self.topic.name}: {o.agent} needs a follow-up", f"{o.agent} {o.reason} with no PR, report or Inbox item")
