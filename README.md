@@ -17,6 +17,12 @@ claude plugin marketplace add jhonsanchez/herdr-orchestrator
 claude plugin install herdr-orchestrator@herdr-orchestrator  # the routing hooks
 ```
 
+Herdr doesn't report where it installed a plugin, and keeps old installations after `herdr plugin update`. To get a stable path for scripts, run the `link` action once after installing and after each update; it points `~/.local/bin/herdr-orch` at the current installation:
+
+```sh
+herdr plugin action invoke jhonsanchez.orchestrator.link
+```
+
 The hooks change nothing for an agent that isn't Managed. For a Managed one:
 - an AskUserQuestion becomes Inbox items, and the dialog is refused with a reason the agent follows (validated in #4);
 - a permission prompt is recorded, and the agent still waits;

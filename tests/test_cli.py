@@ -94,3 +94,12 @@ class CliTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LinkedLauncherTest(unittest.TestCase):
+    def test_symlinked_launcher_still_finds_the_package(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            link = Path(d) / "herdr-orch"
+            link.symlink_to(Path(__file__).resolve().parent.parent / "bin" / "herdr-orch")
+            r = subprocess.run([str(link), "--help"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
