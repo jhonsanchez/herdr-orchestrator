@@ -16,7 +16,7 @@ from herdr_orch.herdr import Herdr
 from herdr_orch.topics import Topic
 
 REFRESH_MS = 2000
-ICONS = {"decision": "?", "question": "?", "permission": "!", "blocked": "◐", "done": "✓"}
+ICONS = {"decision": "?", "question": "?", "permission": "!", "blocked": "◐", "done": "✓", "followup": "↻"}
 
 
 def _age(row: Row, now: float) -> str:
@@ -159,6 +159,9 @@ class App:
             except Exception as e:
                 self.message = f"Could not open: {e}"
         elif key == ord("s"):
+            if row.kind == "followup":
+                self.message = "A follow-up stays until the Orchestrator writes an Inbox item."
+                return True
             if row.item_id:
                 dismiss(self.states, row)
             else:

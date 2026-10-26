@@ -5,6 +5,9 @@ of what herdr reports and the time. Every string they return becomes an Event.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
+from herdr_orch.state import Event
 
 REPORTED = ("blocked", "done")
 
@@ -73,3 +76,53 @@ def is_unattended(
     if heartbeat_at is not None and heartbeat_at >= pending_since:
         return False
     return now - pending_since >= window_min * 60
+
+
+@dataclass(frozen=True)
+class Obligation:
+    """A Managed agent that finished or stopped and has not been followed up."""
+    agent: str
+    reason: str  # "done", "gone" or "stale (idle)"
+    opened_at: float
+
+
+def _ending(event: Event) -> tuple[str, str] | None:
+    """(agent, reason) when an Event says a Managed agent ended without a word to the user."""
+    for suffix in (" done", " gone"):
+        if event.source == "agents" and event.text.endswith(suffix):
+            return event.text[: -len(suffix)], suffix.strip()
+    if event.source == "stale" and " stale (idle)" in event.text:
+        return event.text.split(" stale (idle)")[0], "stale (idle)"
+    return None
+
+
+def open_obligations(
+    events: list[Event],
+    inbox_items: list[dict[str, Any]],
+    statuses: dict[str, str],
+    managed: set[str],
+) -> list[Obligation]:
+    """Every done, gone or stale Managed agent still owed a follow-up.
+
+    An obligation opens at the agent's latest done or gone Event (else its first idle-stale
+    one: a repeated stale alert never reopens it) and closes when an Inbox item for the agent,
+    in any state, was written at or after that. It also ends when the agent works again or
+    is no longer Managed. Writing a chat message closes nothing."""
+    anchors: dict[str, Obligation] = {}
+    for event in events:
+        ending = _ending(event)
+        if ending is None or ending[0] not in managed:
+            continue
+        agent, reason = ending
+        held = anchors.get(agent)
+        if reason == "stale (idle)" and held is not None:
+            continue  # the first stale (or a done, gone) stands
+        anchors[agent] = Obligation(agent, reason, event.at)
+    out = []
+    for o in anchors.values():
+        if statuses.get(o.agent) == "working" and o.reason != "gone":
+            continue
+        if any(i.get("agent") == o.agent and float(i["created_at"]) >= o.opened_at for i in inbox_items):
+            continue
+        out.append(o)
+    return sorted(out, key=lambda o: o.opened_at)

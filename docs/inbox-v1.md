@@ -17,4 +17,4 @@ Each Topic's Inbox is `topics/<topic>/inbox.jsonl` under the state root (`~/.loc
 | `answer` | string \| null | The answer that was sent, once there is one. |
 | `created_at` | number | Unix time in seconds. |
 
-Writers today: the routing hooks (`herdr_orch/hooks.py`). The Orchestrator and the Attention pane (#2) append resolutions.
+Writers today: the routing hooks (`herdr_orch/hooks.py`) and the Orchestrator, through `herdr-orch inbox add --topic T --agent A --question Q --option O...` (the recommended option first). The Orchestrator and the Attention pane (#2) append resolutions.
