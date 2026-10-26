@@ -199,6 +199,28 @@ class TopicState:
                 continue  # a torn line from a concurrent writer
         return out
 
+    def compact_inbox(self) -> int:
+        """Keep only each id's latest line, in order of first appearance; returns the lines removed.
+        Rewritten in place under the append lock, so a concurrent append is never lost."""
+        if not self.inbox.exists():
+            return 0
+        with self.inbox.open("r+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            raw = f.read().splitlines()
+            latest: dict[str, dict[str, object]] = {}
+            for line in raw:
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                latest[str(item.get("id"))] = item
+            if len(latest) == len(raw):
+                return 0
+            f.seek(0)
+            f.truncate()
+            f.write("".join(json.dumps(i, ensure_ascii=False) + "\n" for i in latest.values()))
+            return len(raw) - len(latest)
+
     def resolve(self, item_id: str, status: Status, answer: str | None = None) -> None:
         """Record an item's new state by appending it again with the same id."""
         latest = next((i for i in reversed(self.inbox_lines()) if i.get("id") == item_id), None)

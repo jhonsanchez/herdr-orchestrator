@@ -28,6 +28,7 @@ class Workspace:
     workspace_id: str
     label: str
     repo_root: str | None
+    checkout_path: str | None = None
 
 
 class Herdr(Protocol):
@@ -146,7 +147,8 @@ class CliHerdr:
     def workspaces(self) -> list[Workspace]:
         data = self._json("workspace", "list")
         return [
-            Workspace(w["workspace_id"], w.get("label", ""), (w.get("worktree") or {}).get("repo_root"))
+            Workspace(w["workspace_id"], w.get("label", ""), (w.get("worktree") or {}).get("repo_root"),
+                      (w.get("worktree") or {}).get("checkout_path"))
             for w in data.get("result", {}).get("workspaces", [])
         ]
 

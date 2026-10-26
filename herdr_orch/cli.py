@@ -25,6 +25,7 @@ from typing import Any, Callable, Mapping, Sequence
 from herdr_orch.handover import give_back, take
 from herdr_orch.herdr import CliHerdr, Herdr, find_key
 from herdr_orch.notify import notifier_for, stop_hooks
+from herdr_orch.reconcile import reconcile
 from herdr_orch.runner import Runner
 from herdr_orch.github import CliGitHub
 from herdr_orch.seating import release, seat, start
@@ -136,6 +137,7 @@ def main(
     add_cmd.add_argument("--option", action="append", default=[], help="a choice, the recommended one first (repeatable)")
     add_cmd.add_argument("--kind", choices=("decision", "question"), default="decision")
     sub.add_parser("heartbeat", help="record the Orchestrator's Heartbeat").add_argument("topic")
+    sub.add_parser("reconcile", help="adopt live worktrees, drop dead Registry entries, compact the Inbox").add_argument("topic")
     sub.add_parser("watch", help="run a Topic's Watch runner").add_argument("topic")
     sub.add_parser("setup", help="the setup wizard for this repo's Topic, then start its Orchestrator")
     sub.add_parser("take", help="hand an agent you seated over to its Topic's Orchestrator").add_argument("agent")
@@ -232,6 +234,8 @@ def main(
         elif args.cmd == "release":
             release(state, herdr, CliGitHub(), args.branch)
             print(f"{args.branch} released")
+        elif args.cmd == "reconcile":
+            print(reconcile(topic, state, herdr, now(), home=env.get("HOME")).summary())
         elif args.cmd == "watch":
             _watch(topic, state, herdr, now)
     except (ValueError, RuntimeError, TimeoutError) as e:
@@ -281,6 +285,10 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
 
     runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say, CliGitHub())
     say(f"Watch runner: topic {topic.name}")
+    try:
+        say(f"reconciled: {reconcile(topic, state, herdr, now()).summary()}")
+    except Exception:
+        traceback.print_exc()  # stale records are no reason to skip watching
     try:
         ticks = 0
         while True:
