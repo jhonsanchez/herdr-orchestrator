@@ -14,6 +14,7 @@ class FakeHerdr:
         self._n = 0
         self.ready_after_start = True
         self.becomes_ready = True
+        self.screens: dict[str, list[str]] = {}  # pane -> visible screens in turn; the last one stays
 
     def _pane(self) -> str:
         self._n += 1
@@ -24,6 +25,11 @@ class FakeHerdr:
 
     def read_pane(self, pane_id: str, lines: int) -> str:
         return self.panes.get(pane_id, "")
+
+    def read_screen(self, pane_id: str) -> str:
+        self.calls.append(("read_screen", pane_id))
+        shown = self.screens.get(pane_id, [""])
+        return shown.pop(0) if len(shown) > 1 else shown[0]
 
     def prompt(self, agent: str, text: str) -> None:
         self.calls.append(("prompt", agent, text))
@@ -52,6 +58,12 @@ class FakeHerdr:
     def agent_start(self, name: str, pane_id: str, args: list[str]) -> bool:
         self.calls.append(("agent_start", name, pane_id, tuple(args)))
         return self.ready_after_start
+
+    def notification(self, title: str, body: str) -> None:
+        self.calls.append(("notification", title, body))
+
+    def open_setup(self, repo_root: str) -> None:
+        self.calls.append(("open_setup", repo_root))
 
     def focus(self, target: str) -> None:
         self.calls.append(("focus", target))

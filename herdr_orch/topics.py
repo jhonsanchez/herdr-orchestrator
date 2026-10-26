@@ -6,8 +6,10 @@ brief.md and watches/ sit beside it.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shlex
 import shutil
 import tomllib
 from dataclasses import dataclass, field, fields
@@ -43,8 +45,10 @@ class Topic:
     match: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     model: str | None = None
+    orchestrator_model: str | None = None  # the Orchestrator's own; defaults to model
     base: str | None = None
     notify_command: list[str] = field(default_factory=list)
+    notify: str = "none"  # stop-hook | herdr | none; a notify_command wins over it
     heartbeat_window_min: int = 15
     stale_min: int = 40
     hung_min: int = 60
@@ -105,11 +109,62 @@ def topic_for_workspace(workspaces: list[Workspace], workspace_id: str, topics: 
     return topic_for(ws.repo_root, topics, home) if ws and ws.repo_root else None
 
 
-def init_topic(root: Path, name: str) -> Path:
+NOTIFY_MODES = ("stop-hook", "herdr", "none")
+SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIAL", re.IGNORECASE)
+
+
+def parse_notify(text: str) -> tuple[str | None, list[str] | None]:
+    """A push-alert answer: one of NOTIFY_MODES, or a command to run."""
+    text = text.strip()
+    if not text:
+        return None, None
+    return (text, None) if text in NOTIFY_MODES else (None, shlex.split(text))
+
+
+@dataclass(frozen=True)
+class Answers:
+    """What the setup wizard settled; None leaves the template's default."""
+    match: list[str] | None = None
+    model: str | None = None
+    env: dict[str, str] | None = None
+    notify: str | None = None
+    notify_command: list[str] | None = None
+    yours_alone: list[str] | None = None
+
+
+def _topic_toml(a: Answers) -> str:
+    lines = ["# Written by herdr-orch init. Only what differs from the defaults; edit freely."]
+    for key in ("match", "model", "notify", "notify_command"):
+        value = getattr(a, key)
+        if value:
+            lines.append(f"{key} = {json.dumps(value)}")  # a JSON string or list of strings is valid TOML
+    if a.env:
+        lines += ["", "[env]"] + [f"{k} = {json.dumps(v)}" for k, v in a.env.items()]
+    return "\n".join(lines) + "\n"
+
+
+def _with_yours_alone(playbook: str, items: list[str]) -> str:
+    """The playbook with its Yours alone list replaced; any section after it is kept."""
+    head, _, rest = playbook.partition("## Yours alone")
+    section, sep, after = rest.partition("\n## ")
+    intro = next((line for line in section.splitlines() if line.strip() and not line.startswith("- ")), "")
+    out = f"{head}## Yours alone\n\n{intro}\n\n" + "".join(f"- {i}\n" for i in items)
+    return out + (f"\n## {after}" if sep else "")
+
+
+def init_topic(root: Path, name: str, answers: Answers | None = None) -> Path:
     if not NAME.match(name):
         raise ValueError(f"topic name must match {NAME.pattern}: {name!r}")
+    for key in (answers.env or {}) if answers else {}:
+        if SECRET_NAME.search(key):
+            raise ValueError(f"{key} looks like a secret: keep it in your shell or vault, never in a Topic")
     dest = root / "topics" / name
     if dest.exists():
         raise FileExistsError(dest)
     shutil.copytree(TEMPLATE, dest)
+    if answers is not None:
+        (dest / "topic.toml").write_text(_topic_toml(answers))
+        if answers.yours_alone is not None:
+            playbook = dest / "playbook.md"
+            playbook.write_text(_with_yours_alone(playbook.read_text(), answers.yours_alone))
     return dest

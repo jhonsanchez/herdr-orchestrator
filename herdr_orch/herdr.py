@@ -7,7 +7,7 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from herdr_orch.state import PLUGIN_ID
 
@@ -30,6 +30,7 @@ class Workspace:
 class Herdr(Protocol):
     def agents(self) -> list[Agent]: ...
     def read_pane(self, pane_id: str, lines: int) -> str: ...
+    def read_screen(self, pane_id: str) -> str: ...
     def prompt(self, agent: str, text: str) -> None: ...
     def workspaces(self) -> list[Workspace]: ...
     def workspace_create(self, cwd: str, label: str) -> tuple[str, str]: ...
@@ -40,6 +41,21 @@ class Herdr(Protocol):
     def plugin_config_dir(self) -> str | None: ...
     def wait_ready(self, name: str, timeout_ms: int) -> bool: ...
     def focus(self, target: str) -> None: ...
+    def open_setup(self, repo_root: str) -> None: ...
+    def notification(self, title: str, body: str) -> None: ...
+
+
+Delivery = Literal["answered", "pasted", "missing"]
+
+
+def delivery(screen: str, snippet: str) -> Delivery:
+    """Where a sent prompt ended up on the agent's visible screen: answered (the agent's
+    reply follows it), pasted (left unsent in the input box), or missing."""
+    lines = screen.splitlines()
+    at = max((i for i, line in enumerate(lines) if snippet in line), default=-1)
+    if at < 0:
+        return "missing"
+    return "answered" if any(line.startswith("●") for line in lines[at + 1:]) else "pasted"
 
 
 def find_key(value: Any, key: str) -> str | None:
@@ -82,21 +98,43 @@ class CliHerdr:
     def read_pane(self, pane_id: str, lines: int) -> str:
         return self._run("pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines)).stdout
 
+    def read_screen(self, pane_id: str) -> str:
+        """What the pane shows now. Unlike read_pane, no scrollback: a dismissed screen is gone."""
+        return self._run("pane", "read", pane_id, "--source", "visible", "--lines", "80").stdout
+
+    def _picked_up(self, agent: str, seconds: int) -> bool:
+        for _ in range(seconds):
+            time.sleep(1)
+            status = (self._json("agent", "get", agent).get("result") or {}).get("agent", {}).get("agent_status")
+            if status in ("working", "blocked"):
+                return True
+        return False
+
+    def _screen_of(self, agent: str) -> str:
+        return self._run("agent", "read", agent, "--source", "visible", "--lines", "80").stdout
+
     def prompt(self, agent: str, text: str) -> None:
-        """Send, then check the prompt reached the screen: one sent while Claude is still
-        settling after a startup dialog can be swallowed. Resent once if it is missing;
-        RuntimeError if it never arrives (the runner then retries on its next tick)."""
+        """Send, then make sure the agent took it. Text on screen isn't enough: a prompt
+        can be left pasted in the input box with its Enter lost, or swallowed while
+        Claude settles after a startup screen. A pasted one gets Enter pressed once, a
+        missing one is resent once; RuntimeError otherwise (the runner then retries
+        on its next tick)."""
         snippet = text.splitlines()[0][:30]
         for _ in range(2):
             self._json("agent", "prompt", agent, text)
-            for _ in range(8):
-                time.sleep(1)
-                screen = self._run("agent", "read", agent, "--source", "recent-unwrapped", "--lines", "200").stdout
-                if snippet in screen:
+            if self._picked_up(agent, 8):
+                return
+            where = delivery(self._screen_of(agent), snippet)
+            if where == "answered":  # a quick turn, already over
+                return
+            if where == "pasted":
+                self._json("agent", "send-keys", agent, "enter")
+                if self._picked_up(agent, 8) or delivery(self._screen_of(agent), snippet) == "answered":
                     return
+                break  # never resend over text still in the box
         raise RuntimeError(
-            f"the prompt never reached {agent}: it may be waiting at a dialog herdr doesn't recognise "
-            "(such as enabling a project's MCP servers); answer it in its pane"
+            f"{agent} never took the prompt: it may be waiting at a screen herdr doesn't recognise, "
+            "or the text is still in its input box; check its pane"
         )
 
     def workspaces(self) -> list[Workspace]:
@@ -137,6 +175,15 @@ class CliHerdr:
 
     def focus(self, target: str) -> None:
         self._json("agent", "focus", target)
+
+    def open_setup(self, repo_root: str) -> None:
+        """The setup wizard in a herdr popup: plugin actions have no terminal to ask in."""
+        # No --placement: the CLI flag has no popup value; the manifest's placement = "popup" applies.
+        self._json("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", "setup",
+                   "--env", f"HERDR_ORCH_SETUP_REPO={repo_root}")
+
+    def notification(self, title: str, body: str) -> None:
+        self._json("notification", "show", title, "--body", body)
 
     def plugin_config_dir(self) -> str | None:
         """Where herdr keeps this plugin's config; None when herdr can't say."""

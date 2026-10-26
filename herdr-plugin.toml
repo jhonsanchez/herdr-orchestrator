@@ -11,6 +11,14 @@ title = "Attention"
 placement = "split"
 command = ["sh", "bin/herdr-orch", "attention"]
 
+[[panes]]
+id = "setup"
+title = "New Topic"
+placement = "popup"
+width = "80%"
+height = 26
+command = ["sh", "bin/herdr-orch", "setup"]
+
 [[actions]]
 id = "attention"
 title = "Open the Attention pane"
