@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from herdr_orch.herdr import Agent, Workspace
-from herdr_orch.reconcile import reconcile
+from herdr_orch.reconcile import Reconciled, reconcile
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
 from tests.fakes import FakeHerdr
@@ -24,7 +24,7 @@ class ReconcileTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def run_it(self):
+    def run_it(self) -> Reconciled:
         return reconcile(self.topic, self.state, self.herdr, 100.0, branch_of=self.branches.get, home="/home/u")
 
     def seat(self, ws: str, name: str, path: str) -> None:
@@ -37,6 +37,7 @@ class ReconcileTest(unittest.TestCase):
         result = self.run_it()
         self.assertEqual(result.adopted, ["fix-main-followups"])
         record = self.state.branch_record("fix-main-followups")
+        assert record is not None
         self.assertEqual((record["agent"], record["repo_root"], record["workspace_id"]), ("issue-22", REPO, "w2"))
 
     def test_an_existing_record_is_left_alone_and_a_second_pass_changes_nothing(self) -> None:
@@ -44,7 +45,9 @@ class ReconcileTest(unittest.TestCase):
         self.state.track_branch("issue-26", "issue-26", REPO, "w3", 5.0)
         self.state.set_pr("issue-26", 27, "open", "passing", 6.0)
         self.assertEqual(self.run_it().adopted, [])
-        self.assertEqual(self.state.branch_record("issue-26")["pr"], 27)
+        record = self.state.branch_record("issue-26")
+        assert record is not None
+        self.assertEqual(record["pr"], 27)
 
     def test_the_main_checkout_unmanaged_agents_and_other_topics_are_not_adopted(self) -> None:
         self.herdr.workspace_list.append(Workspace("w1", "x", REPO, REPO))
