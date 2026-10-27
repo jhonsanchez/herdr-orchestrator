@@ -1,3 +1,4 @@
+import os
 import subprocess
 import tempfile
 import unittest
@@ -271,3 +272,16 @@ class EnsureLinkTest(unittest.TestCase):
             self.assertEqual(ensure_link(str(old), str(home)), briefed)  # already right: untouched
             self.assertEqual(ensure_link(str(new), str(home)), briefed)  # stale: repointed, same briefed path
             self.assertEqual(Path(briefed).resolve(), new)
+
+    def test_the_link_goes_to_the_newest_install_not_the_one_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            old, new = (root / "plugins" / "github-installations" / f"jhonsanchez.orchestrator-x" / v / "checkout" / "bin" / "herdr-orch"
+                        for v in ("1-0", "2-0"))
+            for n, cli in enumerate((old, new)):
+                cli.parent.mkdir(parents=True)
+                cli.write_text("#!/bin/sh\n")
+                os.utime(cli, (1000 + n, 1000 + n))
+            link = ensure_link(str(old), str(root / "home"), root / "plugins")
+            self.assertEqual(Path(link).resolve(), new)
+
