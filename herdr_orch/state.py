@@ -147,12 +147,12 @@ class TopicState:
         self._write_branch({**record, "told": [*told, key]})
         return True
 
-    def mark_validated(self, branch: str, now: float) -> bool:
-        """The agent says its work is validated. False when the branch is not tracked."""
+    def mark_validated(self, branch: str, now: float, evidence: str = "") -> bool:
+        """The agent says its work is validated, with the evidence of its check. False when the branch is not tracked."""
         record = self.branch_record(branch)
         if record is None:
             return False
-        self._write_branch({**record, "validated_at": now})
+        self._write_branch({**record, "validated_at": now, "evidence": evidence})
         return True
 
     def _write_branch(self, record: dict[str, object]) -> None:

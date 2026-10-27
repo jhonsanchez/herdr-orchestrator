@@ -286,13 +286,23 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(self.state.managed(), {"p2": "issue-2"})
 
     def test_validated_marks_the_branch_and_tells_the_orchestrator(self) -> None:
-        validated(self.state, "issue-1", 500.0)
-        self.assertEqual(self.state.branch_record("issue-1")["validated_at"], 500.0)  # type: ignore[index]
-        self.assertEqual([e.source for e in self.state.events_since(0)], ["validated"])
+        validated(self.state, "issue-1", 500.0, "herdr-orch deployed: exit 0\nplugin at abc123")
+        record = self.state.branch_record("issue-1")
+        self.assertEqual(record["validated_at"], 500.0)  # type: ignore[index]
+        self.assertEqual(record["evidence"], "herdr-orch deployed: exit 0\nplugin at abc123")  # type: ignore[index]
+        (event,) = self.state.events_since(0)
+        self.assertEqual(event.source, "validated")
+        self.assertIn("exit 0 plugin at abc123", event.text)
+
+    def test_validated_with_empty_evidence_is_refused_and_records_nothing(self) -> None:
+        with self.assertRaisesRegex(ValueError, "evidence"):
+            validated(self.state, "issue-1", 500.0, "  \n ")
+        self.assertNotIn("validated_at", self.state.branch_record("issue-1") or {})
+        self.assertEqual(self.state.events_since(0), [])
 
     def test_validated_on_an_untracked_branch_is_refused(self) -> None:
         with self.assertRaisesRegex(ValueError, "not tracked"):
-            validated(self.state, "nope", 1.0)
+            validated(self.state, "nope", 1.0, "ran it")
 
 
 if __name__ == "__main__":

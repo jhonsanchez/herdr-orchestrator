@@ -254,6 +254,7 @@ class Runner:
             self.state.append_event("deploy", f"{name} deployed at {sha}; its agent is prompted to validate", now)
             if str(branch.get("agent")) in agents:
                 text = (f"Your merge ({sha}) is deployed. Validate it now: check that the installed plugin is at "
-                        f"{sha}. {self.topic.validate} Run `herdr-orch validated {self.topic.name} --branch {name}` "
-                        "only after you have checked, and say what you checked.")
+                        f"{sha}. {self.topic.validate} Run `herdr-orch validated {self.topic.name} --branch {name} "
+                        "--evidence '<what you ran and its last output>'` only after you have checked: an empty "
+                        "evidence is refused.")
                 self.herdr.prompt(str(branch["agent"]), f"[herdr-orchestrator] {' '.join(text.split())}")

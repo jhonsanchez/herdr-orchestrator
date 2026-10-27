@@ -90,7 +90,7 @@ class DeployGateTest(unittest.TestCase):
         self.assertIn("installed plugin is at abc123de", text)
         self.assertIn("Run the plugin's tests.", text)
         self.assertIn("herdr-orch validated waki --branch issue-1", text)
-        self.assertIn("say what you checked", text)
+        self.assertIn("--evidence", text)
 
     def test_green_merged_and_released_each_prompt_once_across_restarts(self) -> None:
         self.github.prs["issue-1"] = PullRequest(20, "open", "passing")
