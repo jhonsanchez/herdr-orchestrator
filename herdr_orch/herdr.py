@@ -202,8 +202,9 @@ class CliHerdr:
 
     def attention_open(self, workspace_id: str, target_pane: str) -> None:
         """The Attention pane in a right-hand column of the workspace, without taking focus."""
+        # No --workspace: herdr rejects it beside --target-pane, whose id already names the workspace.
         self._json("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", "attention",
-                   "--placement", "split", "--direction", "right", "--workspace", workspace_id,
+                   "--placement", "split", "--direction", "right",
                    "--target-pane", target_pane, "--no-focus")
 
     def plugin_config_dir(self) -> str | None:
