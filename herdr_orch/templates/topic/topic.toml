@@ -12,6 +12,11 @@
 # Command that sends you a push: gets "<title>\n<body>" on stdin. Default: none.
 # notify_command = ["ntfy-send"]
 
+# Deploy gate: after a PR merges, the agent is prompted to validate only once this command
+# exits 0. It gets HERDR_ORCH_MERGE_SHA, HERDR_ORCH_TOPIC, HERDR_ORCH_REPO_ROOT and
+# HERDR_ORCH_BRANCH; ~ is expanded. Empty (the default): no gate. For this plugin's own repo:
+# deploy_check = ["~/.local/bin/herdr-orch", "deployed"]
+
 # Minutes before an unanswered Topic is Unattended, and before a silent agent is reported.
 # heartbeat_window_min = 15
 # stale_min = 40

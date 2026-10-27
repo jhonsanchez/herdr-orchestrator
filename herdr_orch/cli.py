@@ -22,6 +22,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from herdr_orch.deploy import is_deployed, plugins_dir
 from herdr_orch.handover import give_back, take
 from herdr_orch.herdr import CliHerdr, Herdr, find_key
 from herdr_orch.notify import notifier_for, stop_hooks
@@ -139,6 +140,9 @@ def main(
     add_cmd.add_argument("--question", required=True)
     add_cmd.add_argument("--option", action="append", default=[], help="a choice, the recommended one first (repeatable)")
     add_cmd.add_argument("--kind", choices=("decision", "question"), default="decision")
+    deployed_cmd = sub.add_parser("deployed", help="exit 0 when a merge is in the installed plugin and the Watch runner runs on it")
+    deployed_cmd.add_argument("topic", nargs="?", default=os.environ.get("HERDR_ORCH_TOPIC"))
+    deployed_cmd.add_argument("--sha", default=os.environ.get("HERDR_ORCH_MERGE_SHA", ""))
     sub.add_parser("heartbeat", help="record the Orchestrator's Heartbeat").add_argument("topic")
     sub.add_parser("reconcile", help="adopt live worktrees, drop dead Registry entries, compact the Inbox").add_argument("topic")
     sub.add_parser("watch", help="run a Topic's Watch runner").add_argument("topic")
@@ -221,6 +225,9 @@ def main(
     try:
         if args.cmd == "heartbeat":
             state.touch_heartbeat(now())
+        elif args.cmd == "deployed":
+            home = env.get("HOME") or str(Path.home())
+            return 0 if is_deployed(args.sha, plugins_dir(env, home), state) else 1
         elif args.cmd == "start":
             if not start(topic, state, herdr, CLI):
                 return 1

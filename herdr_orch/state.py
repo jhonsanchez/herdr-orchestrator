@@ -126,10 +126,17 @@ class TopicState:
         record.update(agent=agent, repo_root=repo_root, workspace_id=workspace_id)
         self._write_branch(record)
 
-    def set_pr(self, branch: str, pr: int | None, pr_state: str | None, checks: str | None, now: float) -> None:
+    def set_pr(self, branch: str, pr: int | None, pr_state: str | None, checks: str | None, now: float,
+               merge_sha: str | None = None) -> None:
         record = self.branch_record(branch)
         if record is not None:
-            self._write_branch({**record, "pr": pr, "pr_state": pr_state, "checks": checks, "pr_since": now})
+            self._write_branch({**record, "pr": pr, "pr_state": pr_state, "checks": checks, "pr_since": now,
+                                "merge_sha": merge_sha or record.get("merge_sha")})
+
+    def mark_deployed(self, branch: str) -> None:
+        record = self.branch_record(branch)
+        if record is not None:
+            self._write_branch({**record, "deployed": True})
 
     def mark_validated(self, branch: str, now: float) -> bool:
         """The agent says its work is validated. False when the branch is not tracked."""

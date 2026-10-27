@@ -20,6 +20,7 @@ class PullRequest:
     state: PrState
     checks: Checks
     url: str = ""
+    merge_sha: str = ""  # the merge commit, once merged
 
 
 class GitHub(Protocol):
@@ -45,7 +46,7 @@ def parse_pr(raw: str) -> PullRequest | None:
         return None
     pick = next((p for p in prs if p["state"] == "OPEN"), max(prs, key=lambda p: p["number"]))
     return PullRequest(pick["number"], pick["state"].lower(), checks_of(pick.get("statusCheckRollup") or []),
-                       pick.get("url", ""))
+                       pick.get("url", ""), (pick.get("mergeCommit") or {}).get("oid", ""))
 
 
 class CliGitHub:
@@ -53,7 +54,7 @@ class CliGitHub:
         try:
             out = subprocess.run(
                 ["gh", "pr", "list", "--head", branch, "--state", "all", "--limit", "10",
-                 "--json", "number,state,url,statusCheckRollup"],
+                 "--json", "number,state,url,mergeCommit,statusCheckRollup"],
                 cwd=repo_root, capture_output=True, text=True, timeout=60)
         except (OSError, subprocess.TimeoutExpired) as e:
             raise RuntimeError(f"gh could not be run: {e}") from e
