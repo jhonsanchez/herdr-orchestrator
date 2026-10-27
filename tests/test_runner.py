@@ -102,6 +102,18 @@ class RunnerTest(unittest.TestCase):
         self.runner.tick(now=20)
         self.assertEqual(len(self.herdr.of("prompt")), 1)
 
+    def test_events_are_held_while_the_person_is_typing_and_delivered_once_the_box_is_clear(self) -> None:
+        self.agents(orch="idle")
+        self.watches.pending = [("jira", "WAKI-7 Done")]
+        self.herdr.busy_agents.add("orch-waki")
+        self.runner.tick(now=10)
+        self.runner.tick(now=20)
+        self.assertEqual(self.herdr.of("prompt"), [])
+        self.herdr.busy_agents.clear()
+        self.runner.tick(now=30)
+        [prompt] = self.herdr.of("prompt")
+        self.assertIn("jira: WAKI-7 Done", str(prompt[2]))
+
     def test_a_restarted_runner_redelivers_what_was_never_answered(self) -> None:
         self.state.append_event("jira", "answered", now=100)
         self.state.touch_heartbeat(now=150)

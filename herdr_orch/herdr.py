@@ -21,6 +21,10 @@ class AgentBlocked(RuntimeError):
     """herdr refused a prompt: the agent is blocked at a dialog, so nothing was sent."""
 
 
+class AgentBusy(AgentBlocked):
+    """The person has text in the agent's input box: nothing was sent, so it is not typed over."""
+
+
 @dataclass(frozen=True)
 class Agent:
     name: str | None
@@ -69,6 +73,13 @@ def delivery(screen: str, snippet: str) -> Delivery:
     if at < 0:
         return "missing"
     return "answered" if any(line.startswith("●") for line in lines[at + 1:]) else "pasted"
+
+
+def typed_input(screen: str) -> str:
+    """What sits in the input box (the last ❯ line on screen), minus Claude's greyed-out suggestion."""
+    prompts = [line for line in screen.splitlines() if line.lstrip().startswith("❯")]
+    text = prompts[-1].lstrip()[1:].strip() if prompts else ""
+    return "" if text.startswith('Try "') else text
 
 
 def find_key(value: Any, key: str) -> str | None:
@@ -139,8 +150,11 @@ class CliHerdr:
         can be left pasted in the input box with its Enter lost, or swallowed while
         Claude settles after a startup screen. A pasted one gets Enter pressed once, a
         missing one is resent once; RuntimeError otherwise (the runner then retries
-        on its next tick). AgentBlocked when herdr refuses it because the agent sits at a dialog."""
+        on its next tick). AgentBlocked when herdr refuses it because the agent sits at a dialog,
+        AgentBusy when the person has typed something a prompt would collide with."""
         snippet = text.splitlines()[0][:30]
+        if typed_input(self._screen_of(agent)):
+            raise AgentBusy(f"{agent} has text in its input box; the prompt was not sent")
         for _ in range(2):
             self._send(agent, text)
             if self._picked_up(agent, 8):
