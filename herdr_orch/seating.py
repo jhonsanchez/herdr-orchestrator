@@ -245,7 +245,8 @@ def _brief(topic: Topic, state: TopicState, herdr: Herdr, cmd: str, pane: str, s
     return True
 
 
-def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str, now: float | None = None) -> None:
+def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str, now: float | None = None,
+            reason: str | None = None) -> None:
     """Clean up a branch: workspace, worktree (which ends its agent), Registry entry and tracking,
     once its PR is merged or closed. An open PR keeps them: its agent, or its next one, still
     needs the checkout."""
@@ -273,7 +274,8 @@ def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str, now: f
     state.untrack(branch)
     if record.get("agent"):  # its follow-ups and open questions go with it
         agent = str(record["agent"])
-        state.append_event("released", f"{agent} released", time.time() if now is None else now)
+        text = f"{agent} released" + (f": {reason}" if reason else "")
+        state.append_event("released", text, time.time() if now is None else now)
         for item in current_items(state.inbox_lines()):
             if item.get("agent") == agent:
                 state.resolve(str(item["id"]), "dismissed")

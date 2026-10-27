@@ -225,7 +225,7 @@ class Runner:
             self._tell(branch, "released", f"{name} is validated and merged: your workspace is being released. "
                                            "Stop; do not run anything more.")
             try:
-                release(self.state, self.herdr, self.github, name)
+                release(self.state, self.herdr, self.github, name, now, f"validated and its PR is {branch['pr_state']}")
             except (RuntimeError, ValueError):
                 continue  # GitHub cannot say, or the PR is open again: keep it, try next tick
             except Exception as e:  # noqa: BLE001 - e.g. herdr failing: keep the record, tell the user once
@@ -234,7 +234,6 @@ class Runner:
                                 f"releasing {name} keeps failing: {e}")
                 continue
             self._failures.pop(f"release {name}", None)
-            self.state.append_event("released", f"{name} released: validated and its PR is {branch['pr_state']}", now)
 
     def _deployed(self, branch: dict[str, object]) -> bool:
         env = {**os.environ, "HERDR_ORCH_MERGE_SHA": str(branch["merge_sha"]), "HERDR_ORCH_TOPIC": self.topic.name,
