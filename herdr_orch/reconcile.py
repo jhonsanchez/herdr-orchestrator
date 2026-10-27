@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
-from herdr_orch.herdr import Herdr
+from herdr_orch.attention import current_items
+from herdr_orch.herdr import Agent, Herdr
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic, topic_for
 
@@ -27,11 +28,13 @@ class Reconciled:
     adopted: list[str]  # branches that gained a record
     dropped: list[str]  # Registry entries removed (agent names)
     compacted: int  # Inbox lines removed
+    switched: list[str] = field(default_factory=list)  # branches an agent moved to inside a tracked workspace
 
     def summary(self) -> str:
         return (f"adopted {len(self.adopted)} branch(es){_list(self.adopted)}, "
                 f"dropped {len(self.dropped)} Registry entr{'y' if len(self.dropped) == 1 else 'ies'}{_list(self.dropped)}, "
-                f"compacted {self.compacted} Inbox line(s)")
+                f"compacted {self.compacted} Inbox line(s), "
+                f"flagged {len(self.switched)} switched branch(es){_list(self.switched)}")
 
 
 def _list(items: list[str]) -> str:
@@ -57,6 +60,7 @@ def reconcile(
 
     managed = state.managed()
     adopted = []
+    switched = []
     for ws in herdr.workspaces():
         if not (ws.repo_root and ws.checkout_path and ws.checkout_path != ws.repo_root):
             continue  # not a worktree
@@ -66,7 +70,21 @@ def reconcile(
         branch = branch_of(ws.checkout_path)
         if owner is None or branch is None or state.branch_record(branch) is not None:
             continue
+        held = next((r for r in state.tracked_branches()
+                     if r.get("workspace_id") == ws.workspace_id or r.get("agent") == owner.name), None)
+        if held is not None:  # one branch per workspace and agent: a second one is not ours to adopt
+            _flag_switch(state, owner, branch, str(held["branch"]), now)
+            switched.append(branch)
+            continue
         state.track_branch(branch, str(owner.name), ws.repo_root, ws.workspace_id, now)
         adopted.append(branch)
 
-    return Reconciled(adopted, dropped, state.compact_inbox())
+    return Reconciled(adopted, dropped, state.compact_inbox(), switched)
+
+
+def _flag_switch(state: TopicState, owner: Agent, branch: str, held: str, now: float) -> None:
+    """Raise it once in the Attention pane: the agent works `branch` in the workspace of `held`."""
+    question = f"{owner.name} switched to {branch} in the workspace of {held}: seat {branch} separately"
+    if any(i.get("agent") == owner.name and i.get("question") == question for i in current_items(state.inbox_lines())):
+        return
+    state.escalate(str(owner.name), owner.pane_id, "question", question, [], now, to="orchestrator")

@@ -40,6 +40,20 @@ class ReconcileTest(unittest.TestCase):
         assert record is not None
         self.assertEqual((record["agent"], record["repo_root"], record["workspace_id"]), ("issue-22", REPO, "w2"))
 
+    def test_a_second_branch_in_a_tracked_workspace_is_flagged_not_adopted(self) -> None:
+        # #57: the issue-31 agent worked issue-45 in issue-31's worktree.
+        self.seat("w23", "issue-31", "/wt/issue-31")
+        self.state.track_branch("issue-31", "issue-31", REPO, "w23", 5.0)
+        self.branches["/wt/issue-31"] = "issue-45"
+        for _ in range(2):  # a repeat pass raises nothing new
+            result = self.run_it()
+            self.assertEqual((result.adopted, result.switched), ([], ["issue-45"]))
+        self.assertIsNone(self.state.branch_record("issue-45"))
+        [item] = [i for i in self.state.inbox_lines() if i["status"] == "open"]
+        self.assertEqual((item["agent"], item["pane"], item["to"]), ("issue-31", "w23:p1", "orchestrator"))
+        self.assertIn("issue-45", str(item["question"]))
+        self.assertIn("seat issue-45 separately", str(item["question"]))
+
     def test_an_existing_record_is_left_alone_and_a_second_pass_changes_nothing(self) -> None:
         self.seat("w3", "issue-26", "/wt/issue-26")
         self.state.track_branch("issue-26", "issue-26", REPO, "w3", 5.0)

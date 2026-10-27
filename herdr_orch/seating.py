@@ -93,6 +93,14 @@ class Seated:
     pane_id: str
 
 
+def _tracked_with_agent(state: TopicState, herdr: Herdr, workspace_id: str, branch: str) -> str | None:
+    """The tracked branch that blocks seating `branch` on this workspace: the same branch (so the same
+    worktree path) or the workspace itself, while its agent is still running in herdr."""
+    alive = {a.name for a in herdr.agents()}
+    return next((str(r["branch"]) for r in state.tracked_branches()
+                 if r.get("agent") in alive and (r["branch"] == branch or r.get("workspace_id") == workspace_id)), None)
+
+
 def seat(
     topic: Topic,
     state: TopicState,
@@ -111,6 +119,10 @@ def seat(
     ws = next((w for w in herdr.workspaces() if w.workspace_id == workspace_id), None)
     if ws is None:
         raise ValueError(f"no herdr workspace {workspace_id}")
+    held = _tracked_with_agent(state, herdr, workspace_id, branch)
+    if held is not None:
+        raise ValueError(f"{held} is already tracked on {workspace_id}: an agent works one branch in one workspace, "
+                         f"so {branch} needs a workspace of its own")
     repo = Path(ws.repo_root or ws.label).name
     path = f"{home}/.herdr/worktrees/{repo}/{branch}"
     if existing:
