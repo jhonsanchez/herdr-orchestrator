@@ -203,7 +203,10 @@ def _brief(topic: Topic, state: TopicState, herdr: Herdr, cmd: str, pane: str, s
         name,
         f"You are the Orchestrator for topic {topic.name}. Read the playbook at {topic.playbook_path} "
         "and follow it; its Yours alone section is never yours to decide. New events arrive as prompts "
-        f"from herdr-orchestrator. Seat agents with: {cmd} seat {topic.name} --workspace <id> --branch <branch>. "
+        "from herdr-orchestrator. When a PR event says its checks are green, merge it with gh pr merge if the "
+        "playbook lets you merge (then release its branch); if the playbook keeps merging Yours alone, put it in "
+        "the Inbox with a recommended answer. When checks fail, prompt the PR's agent with the failure. "
+        f"Seat agents with: {cmd} seat {topic.name} --workspace <id> --branch <branch>. "
         f"After handling events, run: {cmd} heartbeat {topic.name}",
     )
     state.mark_briefed()

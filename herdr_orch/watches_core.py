@@ -177,9 +177,20 @@ def pr_change(branch: dict[str, Any], pr: PullRequest | None) -> str | None:
         return None
     label = f"PR #{pr.number} ({branch['branch']})"
     if branch.get("pr") != pr.number:
-        return f"{label} {pr.state}, checks {pr.checks}"
+        return f"{label} {pr.state}, checks {pr.checks}" + _next_step(pr)
     if branch.get("pr_state") != pr.state:
         return f"{label} {pr.state}" + ("; its workspace can be cleaned up" if pr.state != "open" else "")
     if branch.get("checks") != pr.checks:
-        return f"{label} checks {pr.checks}"
+        return f"{label} checks {pr.checks}" + _next_step(pr)
     return None
+
+
+def _next_step(pr: PullRequest) -> str:
+    """What the Orchestrator owes an open PR whose checks just settled."""
+    if pr.state != "open":
+        return ""
+    if pr.checks == "passing":
+        return "; green: merge it if the playbook lets you, else put it in the Inbox"
+    if pr.checks == "failing":
+        return "; send the failure back to its agent"
+    return ""
