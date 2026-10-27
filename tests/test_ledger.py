@@ -6,7 +6,7 @@ from pathlib import Path
 from herdr_orch.attention import load
 from herdr_orch.github import OpenPr, open_pulls_args, parse_open_pulls, pull_args, review_of, reviews_args
 from herdr_orch.herdr import Agent, Workspace
-from herdr_orch.ledger import Ledger, classify_branch, classify_pr, ledger_lines
+from herdr_orch.ledger import Ledger, classify_branch, classify_pr, ledger_lines, status_rows, status_table
 from herdr_orch.runner import PR_POLL_SECONDS, Runner
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
@@ -114,7 +114,8 @@ class SweepTest(unittest.TestCase):
     def test_tracked_and_untracked_prs_are_both_in_the_ledger(self) -> None:
         self.assertEqual(self.ledger.sweep(["/r"], self.agents, 100), [])
         led = self.ledger_of()
-        self.assertEqual(led, {"state": "waiting_on", "waiting_on": "merge", "owner": "orchestrator", "since": 100})
+        self.assertEqual(led, {"state": "waiting_on", "waiting_on": "merge", "owner": "orchestrator", "mergeable_state": "clean",
+                                "since": 100})
         (u,) = self.state.untracked_prs()
         self.assertEqual((u["number"], u["author"], u["waiting_on"], u["owner"], u["since"]),
                          (651, "dependabot[bot]", "conflict", "orchestrator", 100))
@@ -174,6 +175,30 @@ class SweepTest(unittest.TestCase):
         self.gh.open["/r"] = self.gh.open["/r"][:1]
         self.ledger.sweep(["/r"], self.agents, 160)
         self.assertEqual(self.state.untracked_prs(), [])
+
+    def test_a_changed_mergeable_state_alone_does_not_restart_time_in_state(self) -> None:
+        self.ledger.sweep(["/r"], self.agents, 100)
+        self.gh.open["/r"][0] = pr(646, "WAKI-12", state="blocked", review="approved")  # still waiting on merge
+        self.gh.detail[646] = pr(646, "WAKI-12", state="blocked", review="approved")
+        self.ledger.sweep(["/r"], self.agents, 160)
+        led = self.ledger_of()
+        self.assertEqual((led["waiting_on"], led["mergeable_state"], led["since"]), ("merge", "blocked", 100))
+
+    def test_status_rows_and_table(self) -> None:
+        self.assertEqual(status_rows(self.state, 0), [])  # nothing swept yet
+        self.assertIn("not recorded any yet", status_table([]))
+        self.ledger.sweep(["/r"], self.agents, 100)
+        rows = status_rows(self.state, 100 + 300)
+        self.assertEqual(rows, [
+            {"branch": "WAKI-12", "pr": 646, "tracked": True, "state": "waiting_on", "waiting_on": "merge",
+             "owner": "orchestrator", "age_s": 300, "checks": "passing", "mergeable_state": "clean"},
+            {"branch": "dependabot/npm_and_yarn/left-pad-1.1", "pr": 651, "tracked": False, "state": "waiting_on",
+             "waiting_on": "conflict", "owner": "orchestrator", "age_s": 300, "checks": "passing",
+             "mergeable_state": "dirty"}])
+        lines = status_table(rows).splitlines()
+        self.assertEqual(lines[0].split(), ["BRANCH", "PR", "STATE", "OWNER", "IN", "STATE", "CHECKS", "MERGEABLE"])
+        self.assertEqual(lines[1].split(), ["WAKI-12", "#646", "waiting", "on", "merge", "orchestrator", "5m", "passing", "clean"])
+        self.assertIn("(untracked PR)", lines[2])
 
     def test_the_attention_lines(self) -> None:
         self.ledger.sweep(["/r"], self.agents, 100)

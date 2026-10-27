@@ -74,6 +74,25 @@ class CliTest(unittest.TestCase):
         self.assertTrue((Path(self.env["HERDR_ORCH_STATE"]) / "topics/waki").is_dir())
         self.assertEqual(TopicState(Path(self.env["HERDR_ORCH_STATE"]), "waki").heartbeat_at(), 77.0)
 
+    def test_status_prints_the_stored_ledger_as_a_table_or_json(self) -> None:
+        with redirect_stdout(io.StringIO()):
+            main(["init", "waki"], self.env)
+        state = TopicState(Path(self.env["HERDR_ORCH_STATE"]), "waki")
+        state.take("w1:p1", "issue-7")
+        state.track_branch("issue-7", "issue-7", "/r", "w9", now=0)
+        state.set_pr("issue-7", 7, "open", "failing", 0)
+        state.set_ledger("issue-7", {"state": "waiting_on", "waiting_on": "ci", "owner": "agent", "mergeable_state": "clean"}, 60)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(main(["status", "waki"], self.env, now=lambda: 360.0), 0)
+        self.assertIn("issue-7", out.getvalue())
+        self.assertIn("waiting on ci", out.getvalue())
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(main(["status", "waki", "--json"], self.env, now=lambda: 360.0), 0)
+        (row,) = json.loads(out.getvalue())
+        self.assertEqual((row["branch"], row["pr"], row["owner"], row["age_s"], row["checks"]), ("issue-7", 7, "agent", 300, "failing"))
+
     def test_unknown_topic_is_an_error(self) -> None:
         with redirect_stdout(io.StringIO()):
             self.assertEqual(main(["heartbeat", "nope"], self.env), 2)

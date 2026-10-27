@@ -295,7 +295,9 @@ def _brief(topic: Topic, state: TopicState, herdr: Herdr, cmd: str, pane: str, s
         "playbook lets you merge (then release its branch); if the playbook keeps merging Yours alone, put it in "
         "the Inbox with a recommended answer. When checks fail, prompt the PR's agent with the failure. "
         f"Seat agents with: {cmd} seat {topic.name} --workspace <id> --branch <branch>. "
-        f"After handling events, run: {cmd} heartbeat {topic.name}",
+        f"After handling each event batch, run: {cmd} heartbeat {topic.name} and then {cmd} status {topic.name}: "
+        "the ledger of every branch and open PR. Act on any row whose owner is orchestrator and on any untracked "
+        "PR. With no events, run status again on a timer you set yourself (ScheduleWakeup or /loop).",
     )
     state.mark_briefed()
     return True

@@ -29,6 +29,7 @@ from herdr_orch.notify import notifier_for, stop_hooks
 from herdr_orch.reconcile import reconcile
 from herdr_orch.runner import Runner
 from herdr_orch.github import CliGitHub
+from herdr_orch.ledger import status_rows, status_table
 from herdr_orch.seating import ensure_link, release, seat, start, validated
 from herdr_orch.state import TopicState, find_managed, state_root
 from herdr_orch.supervisor import Supervisor
@@ -147,6 +148,9 @@ def main(
     deployed_cmd.add_argument("topic", nargs="?", default=os.environ.get("HERDR_ORCH_TOPIC"))
     deployed_cmd.add_argument("--sha", default=os.environ.get("HERDR_ORCH_MERGE_SHA", ""))
     sub.add_parser("heartbeat", help="record the Orchestrator's Heartbeat").add_argument("topic")
+    status_cmd = sub.add_parser("status", help="print the branch ledger: every tracked branch and untracked open PR")
+    status_cmd.add_argument("topic")
+    status_cmd.add_argument("--json", action="store_true", help="rows as JSON, for scripts")
     sub.add_parser("reconcile", help="adopt live worktrees, drop dead Registry entries, compact the Inbox").add_argument("topic")
     sub.add_parser("watch", help="run a Topic's Watch runner").add_argument("topic")
     sub.add_parser("setup", help="the setup wizard for this repo's Topic, then start its Orchestrator")
@@ -229,6 +233,9 @@ def main(
     try:
         if args.cmd == "heartbeat":
             state.touch_heartbeat(now())
+        elif args.cmd == "status":
+            rows = status_rows(state, now())
+            print(json.dumps(rows) if args.json else status_table(rows))
         elif args.cmd == "deployed":
             home = env.get("HOME") or str(Path.home())
             return 0 if is_deployed(args.sha, plugins_dir(env, home), state) else 1

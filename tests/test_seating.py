@@ -184,6 +184,7 @@ class SeatingTest(unittest.TestCase):
         [prompt] = self.herdr.of("prompt")
         self.assertIn(str(self.topic.playbook_path), str(prompt[2]))
         self.assertIn(f"HERDR_ORCH_STATE={self.state.dir.parent.parent} /opt/plug/bin/herdr-orch heartbeat zebra", str(prompt[2]))
+        self.assertIn("/opt/plug/bin/herdr-orch status zebra", str(prompt[2]))
 
     def test_the_runner_starts_only_after_the_orchestrator_exists(self) -> None:
         self.write_playbook()
