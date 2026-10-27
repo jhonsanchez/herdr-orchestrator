@@ -125,6 +125,7 @@ def main(
     seat_cmd.add_argument("--workspace", required=True)
     seat_cmd.add_argument("--branch", required=True)
     seat_cmd.add_argument("--label")
+    seat_cmd.add_argument("--name", help="agent name (default: from the branch, with a short suffix when long or taken)")
     seat_cmd.add_argument("--existing", action="store_true",
                           help="the branch is already pushed to origin: seat on it (an orphaned PR gets an owner again)")
     release_cmd = sub.add_parser("release", help="remove a branch's workspace and worktree once its PR is merged or closed")
@@ -243,7 +244,7 @@ def main(
             state.escalate(args.agent, pane, args.kind, args.question, args.option, now(), to="orchestrator")
         elif args.cmd == "seat":
             seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"),
-                          existing=args.existing, now=now,
+                          existing=args.existing, now=now, name=args.name,
                           cli=ensure_link(CLI, env.get("HOME") or str(Path.home()),
                                           plugins_dir(env, env.get("HOME") or str(Path.home()))))
             print(f"{seated.name} {seated.pane_id}")
@@ -257,7 +258,7 @@ def main(
             print(reconcile(topic, state, herdr, now(), home=env.get("HOME")).summary())
         elif args.cmd == "watch":
             _watch(topic, state, herdr, now, env)
-    except (ValueError, RuntimeError, TimeoutError) as e:
+    except (ValueError, RuntimeError, TimeoutError, subprocess.CalledProcessError) as e:
         print(e, file=sys.stderr)
         return 1
     return 0
