@@ -10,7 +10,7 @@ from herdr_orch.attention import load
 from herdr_orch.github import PullRequest, checks_of, parse_pr
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch.runner import PR_POLL_SECONDS, Runner
-from herdr_orch.seating import release, seat
+from herdr_orch.seating import release, seat, validated
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
 from herdr_orch.watches_core import open_obligations
@@ -244,6 +244,22 @@ class ReleaseTest(unittest.TestCase):
         release(self.state, self.herdr, self.github, "issue-1")
         self.assertEqual(self.herdr.of("worktree_remove"), [("worktree_remove", "w9")])
         self.assertIsNone(self.state.branch_record("issue-1"))
+
+    def test_release_gives_back_the_agents_registry_entry(self) -> None:
+        self.state.take("p1", "issue-1")
+        self.state.take("p2", "issue-2")
+        self.github.prs["issue-1"] = PullRequest(20, "closed", "none")
+        release(self.state, self.herdr, self.github, "issue-1")
+        self.assertEqual(self.state.managed(), {"p2": "issue-2"})
+
+    def test_validated_marks_the_branch_and_tells_the_orchestrator(self) -> None:
+        validated(self.state, "issue-1", 500.0)
+        self.assertEqual(self.state.branch_record("issue-1")["validated_at"], 500.0)  # type: ignore[index]
+        self.assertEqual([e.source for e in self.state.events_since(0)], ["validated"])
+
+    def test_validated_on_an_untracked_branch_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not tracked"):
+            validated(self.state, "nope", 1.0)
 
 
 if __name__ == "__main__":
