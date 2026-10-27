@@ -131,6 +131,14 @@ class TopicState:
         if record is not None:
             self._write_branch({**record, "pr": pr, "pr_state": pr_state, "checks": checks, "pr_since": now})
 
+    def mark_validated(self, branch: str, now: float) -> bool:
+        """The agent says its work is validated. False when the branch is not tracked."""
+        record = self.branch_record(branch)
+        if record is None:
+            return False
+        self._write_branch({**record, "validated_at": now})
+        return True
+
     def _write_branch(self, record: dict[str, object]) -> None:
         self.branches.mkdir(parents=True, exist_ok=True)
         path = self._branch_file(str(record["branch"]))

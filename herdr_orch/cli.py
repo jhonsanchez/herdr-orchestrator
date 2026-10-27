@@ -28,7 +28,7 @@ from herdr_orch.notify import notifier_for, stop_hooks
 from herdr_orch.reconcile import reconcile
 from herdr_orch.runner import Runner
 from herdr_orch.github import CliGitHub
-from herdr_orch.seating import release, seat, start
+from herdr_orch.seating import release, seat, start, validated
 from herdr_orch.state import TopicState, find_managed, state_root
 from herdr_orch.supervisor import Supervisor
 from herdr_orch.topics import Answers, Topic, parse_notify, config_root, init_topic, load_topic, load_topics, topic_for
@@ -129,6 +129,9 @@ def main(
     release_cmd = sub.add_parser("release", help="remove a branch's workspace and worktree once its PR is merged or closed")
     release_cmd.add_argument("topic")
     release_cmd.add_argument("--branch", required=True)
+    validated_cmd = sub.add_parser("validated", help="an agent's signal that its branch is validated and can be released")
+    validated_cmd.add_argument("topic")
+    validated_cmd.add_argument("--branch", required=True)
     inbox_cmd = sub.add_parser("inbox", help="write Inbox items as the Orchestrator").add_subparsers(dest="inbox_cmd", required=True)
     add_cmd = inbox_cmd.add_parser("add", help="put a decision for the user in the Attention pane")
     add_cmd.add_argument("--topic", required=True)
@@ -234,6 +237,9 @@ def main(
         elif args.cmd == "release":
             release(state, herdr, CliGitHub(), args.branch)
             print(f"{args.branch} released")
+        elif args.cmd == "validated":
+            validated(state, args.branch, now())
+            print(f"{args.branch} marked validated")
         elif args.cmd == "reconcile":
             print(reconcile(topic, state, herdr, now(), home=env.get("HOME")).summary())
         elif args.cmd == "watch":

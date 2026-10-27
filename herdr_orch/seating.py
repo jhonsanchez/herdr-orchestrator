@@ -134,7 +134,8 @@ def seat(
     herdr.prompt(
         name,
         f"You are seated on {branch} for topic {topic.name}. Read your brief at {topic.brief_path} "
-        f"and follow it, then start the work.{resume}",
+        f"and follow it, then start the work. When your work is validated, run: herdr-orch validated {topic.name} "
+        f"--branch {branch}.{resume}",
     )
     return Seated(name, pane)
 
@@ -214,8 +215,9 @@ def _brief(topic: Topic, state: TopicState, herdr: Herdr, cmd: str, pane: str, s
 
 
 def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str) -> None:
-    """Clean up a branch's workspace and worktree, once its PR is merged or closed.
-    An open PR keeps them: its agent, or its next one, still needs the checkout."""
+    """Clean up a branch: workspace, worktree (which ends its agent), Registry entry and tracking,
+    once its PR is merged or closed. An open PR keeps them: its agent, or its next one, still
+    needs the checkout."""
     record = state.branch_record(branch)
     if record is None:
         raise ValueError(f"{branch} is not tracked in Topic {state.topic}")
@@ -225,4 +227,15 @@ def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str) -> Non
             raise RuntimeError(f"PR #{pr.number} for {branch} is still open: close or merge it first")
     if record.get("workspace_id"):
         herdr.worktree_remove(str(record["workspace_id"]))
+    for pane, agent in state.managed().items():
+        if agent == record.get("agent"):
+            state.give_back(pane)
     state.untrack(branch)
+
+
+def validated(state: TopicState, branch: str, now: float) -> None:
+    """The agent's signal that its work is validated: the Orchestrator hears of it as an Event
+    and releases the branch once its PR is merged or closed."""
+    if not state.mark_validated(branch, now):
+        raise ValueError(f"{branch} is not tracked in Topic {state.topic}")
+    state.append_event("validated", f"{branch} is validated: release it once its PR is merged or closed", now)
