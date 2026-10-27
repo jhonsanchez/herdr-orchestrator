@@ -103,6 +103,17 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual([(i["id"], i["status"]) for i in self.state.inbox_lines()], [("a", "resolved"), ("b", "open")])
         self.assertEqual(self.run_it().compacted, 0)
 
+    def test_open_items_of_a_gone_pane_whose_agent_is_the_string_none_are_swept_even_beside_a_none_branch(self) -> None:
+        # #76: the five "None switched to issue-35" items; a tracked branch also carried agent "None".
+        self.state.track_branch("orchestrator", "None", REPO, "w12", 5.0)
+        self.state.escalate("None", "w1Y:p1", "question", "None switched to issue-35", [], 6.0)
+        self.state.escalate("issue-40", "w9:p1", "question", "live pane", [], 6.0)
+        self.herdr.agent_list.append(Agent("issue-40", "idle", "w9:p1", "w9"))
+        self.assertEqual(self.run_it().swept, ["None"])
+        [item] = [i for i in self.state.inbox_lines() if i["status"] == "open"]
+        self.assertEqual(item["agent"], "issue-40")
+        self.assertEqual(self.run_it().swept, [])
+
     def test_rows_of_vanished_agents_are_swept_and_named_but_a_tracked_branch_keeps_its_rows(self) -> None:
         for agent in ("issue-10", "issue-30", "issue-31"):
             self.state.append_event("agents", f"{agent} gone", 5.0)
