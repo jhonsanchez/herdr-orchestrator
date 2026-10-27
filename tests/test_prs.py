@@ -144,7 +144,7 @@ class RunnerPrTest(unittest.TestCase):
         ])
 
     def test_an_unchanged_pr_says_nothing_and_a_merged_one_is_not_asked_about_again(self) -> None:
-        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing")
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc123")
         self.runner.tick(1)
         self.runner.tick(1 + PR_POLL_SECONDS)
         self.assertEqual(len(self.events()), 1)

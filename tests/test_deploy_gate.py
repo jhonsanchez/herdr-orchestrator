@@ -62,6 +62,18 @@ class DeployGateTest(unittest.TestCase):
         again.tick(1 + 5 * PR_POLL_SECONDS)
         self.assertEqual(len(self.prompts()), 1)
 
+    def test_a_branch_merged_without_a_merge_sha_is_backfilled_then_gated(self) -> None:
+        self.state.set_pr("issue-1", 20, "merged", "passing", 0)  # as recorded before merge_sha existed
+        self.flag.touch()
+        self.runner.tick(1)
+        self.assertEqual(self.prompts(), [])  # GitHub has not answered with a merge commit yet
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc123def456")
+        self.runner.tick(1 + PR_POLL_SECONDS)
+        self.runner.tick(1 + PR_POLL_SECONDS + DEPLOY_POLL_SECONDS)
+        self.assertEqual(self.state.branch_record("issue-1")["merge_sha"], "abc123def456")  # type: ignore[index]
+        self.assertEqual(len(self.prompts()), 1)
+        self.assertNotIn("pr", [e.source for e in self.state.events_since(0)])
+
     def test_no_deploy_check_means_no_gate(self) -> None:
         plain = Runner(Topic(name="waki", dir=self.root / "cfg"), self.state, self.herdr, Quiet(),
                        notify=lambda t, b: None, github=self.github)
