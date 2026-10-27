@@ -81,7 +81,7 @@ class PluginDeployTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.plugins = Path(self.tmp.name) / "plugins"
-        self.checkout = self.plugins / "github-installations" / "jhonsanchez.orchestrator-1"
+        self.checkout = self.plugins / "github-installations" / "jhonsanchez.orchestrator-ede327093c3b" / "2074762-0" / "checkout"
         (self.checkout / "bin").mkdir(parents=True)
         (self.checkout / "bin" / "herdr-orch").write_text("#!/bin/sh\n")
         git = ["git", "-C", str(self.checkout), "-c", "user.name=t", "-c", "user.email=t@t"]
@@ -95,6 +95,13 @@ class PluginDeployTest(unittest.TestCase):
         self.assertIsNone(installed_checkout(self.plugins / "nowhere"))
         self.assertTrue(holds(self.checkout, self.sha))
         self.assertFalse(holds(self.checkout, "0" * 40))
+
+    def test_the_older_layout_without_a_version_folder_is_still_found(self) -> None:
+        old = self.plugins / "github" / "jhonsanchez.orchestrator-1"
+        (old / "bin").mkdir(parents=True)
+        (old / "bin" / "herdr-orch").write_text("#!/bin/sh\n")
+        os.utime(old / "bin" / "herdr-orch", (9e9, 9e9))
+        self.assertEqual(installed_checkout(self.plugins), old)
 
     def test_runner_must_run_from_the_checkout(self) -> None:
         self.assertFalse(runner_on(self.checkout, os.getpid()))

@@ -11,8 +11,11 @@ from herdr_orch.state import PLUGIN_ID, TopicState
 
 
 def installed_checkout(plugins_dir: Path) -> Path | None:
-    """The newest installation herdr keeps (it leaves old ones behind after an update)."""
-    bins = [b for kind in ("github-installations", "github") for b in (plugins_dir / kind).glob(f"*{PLUGIN_ID}-*/bin/herdr-orch")]
+    """The newest installation herdr keeps (it leaves old ones behind after an update).
+    herdr 0.9.5 lays one out as <plugin>-<hash>/<version>-<n>/checkout; older ones had the checkout directly."""
+    bins = [b for kind in ("github-installations", "github")
+            for pattern in (f"*{PLUGIN_ID}-*/*/checkout/bin/herdr-orch", f"*{PLUGIN_ID}-*/bin/herdr-orch")
+            for b in (plugins_dir / kind).glob(pattern)]
     return max(bins, key=lambda b: b.stat().st_mtime).parent.parent if bins else None
 
 
