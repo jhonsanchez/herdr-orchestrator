@@ -79,14 +79,34 @@ class ReconcileTest(unittest.TestCase):
         assert record is not None
         self.assertEqual(record["pr"], 27)
 
-    def test_the_main_checkout_unmanaged_agents_and_other_topics_are_not_adopted(self) -> None:
+    def test_the_main_checkout_and_other_topics_are_not_adopted(self) -> None:
         self.herdr.workspace_list.append(Workspace("w1", "x", REPO, REPO))
         self.herdr.workspace_list.append(Workspace("w4", "other", "/home/u/projects/zebra/z", "/wt/issue-22"))
         self.herdr.agent_list.append(Agent("issue-22", "idle", "w4:p1", "w4"))
         self.state.take("w4:p1", "issue-22")
+        self.assertEqual(self.run_it().adopted, [])
+        self.assertEqual(self.state.managed(), {"w4:p1": "issue-22"})
+
+    def test_a_hand_started_agent_in_a_topic_worktree_is_registered_and_its_branch_tracked_once(self) -> None:
+        # #94: the waki session's agents were never registered, so no checks/merged/conflict events.
         self.herdr.workspace_list.append(Workspace("w5", "free", REPO, "/wt/issue-26"))
         self.herdr.agent_list.append(Agent("free", "idle", "w5:p1", "w5"))
-        self.assertEqual(self.run_it().adopted, [])
+        for _ in range(2):
+            result = self.run_it()
+        self.assertEqual(self.state.managed(), {"w5:p1": "free"})
+        record = self.state.branch_record("issue-26")
+        assert record is not None
+        self.assertEqual((record["agent"], record["workspace_id"]), ("free", "w5"))
+        self.assertEqual((result.registered, result.unregistered), ([], []))
+
+    def test_a_named_agent_is_not_adopted_into_a_workspace_that_has_a_record_and_is_reported(self) -> None:
+        self.herdr.workspace_list.append(Workspace("w5", "free", REPO, "/wt/issue-26"))
+        self.herdr.agent_list.append(Agent("free", "idle", "w5:p1", "w5"))
+        self.state.track_branch("other", "gone-agent", REPO, "w5", 5.0)
+        result = self.run_it()
+        self.assertEqual((result.registered, result.unregistered), ([], ["free"]))
+        self.assertEqual(self.state.managed(), {})
+        self.assertIsNone(self.state.branch_record("issue-26"))
 
     def test_registry_entries_of_gone_agents_are_dropped(self) -> None:
         self.seat("w2", "issue-22", "/wt/issue-22")
