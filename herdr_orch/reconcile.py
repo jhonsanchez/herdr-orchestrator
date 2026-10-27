@@ -34,13 +34,17 @@ class Reconciled:
     compacted: int  # Inbox lines removed
     switched: list[str] = field(default_factory=list)  # branches an agent moved to inside a tracked workspace
     swept: list[str] = field(default_factory=list)  # agents whose open follow-ups or questions were dropped
+    registered: list[str] = field(default_factory=list)  # hand-started agents put in the Registry (#94)
+    unregistered: list[str] = field(default_factory=list)  # named agents in a Topic worktree that stay outside it
 
     def summary(self) -> str:
         return (f"adopted {len(self.adopted)} branch(es){_list(self.adopted)}, "
                 f"dropped {len(self.dropped)} Registry entr{'y' if len(self.dropped) == 1 else 'ies'}{_list(self.dropped)}, "
                 f"compacted {self.compacted} Inbox line(s), "
                 f"flagged {len(self.switched)} switched branch(es){_list(self.switched)}, "
-                f"swept rows of {len(self.swept)} vanished agent(s){_list(self.swept)}")
+                f"swept rows of {len(self.swept)} vanished agent(s){_list(self.swept)}, "
+                f"registered {len(self.registered)} hand-started agent(s){_list(self.registered)}, "
+                f"{len(self.unregistered)} named agent(s) not in the Registry{_list(self.unregistered)}")
 
 
 def _list(items: list[str]) -> str:
@@ -66,6 +70,8 @@ def reconcile(
 
     managed = state.managed()
     adopted = []
+    registered = []
+    unregistered: list[str] = []
     switched = []
     flagged = set()
     for ws in herdr.workspaces():
@@ -75,6 +81,17 @@ def reconcile(
             continue
         owner = next((a for a in agents if a.workspace_id == ws.workspace_id and managed.get(a.pane_id) == a.name), None)
         branch = branch_of(ws.checkout_path)
+        if owner is None:  # #94: an agent started by hand here was never registered
+            loose = [a for a in agents if a.workspace_id == ws.workspace_id and a.name and a.pane_id not in managed]
+            has_record = any(r.get("workspace_id") == ws.workspace_id for r in state.tracked_branches())
+            if loose and branch is not None and not has_record and state.branch_record(branch) is None \
+                    and not any(r.get("agent") == loose[0].name for r in state.tracked_branches()):
+                state.take(loose[0].pane_id, str(loose[0].name))  # #59: only into a workspace without a record
+                registered.append(str(loose[0].name))
+                owner = loose[0]
+                managed = state.managed()
+            else:
+                unregistered.extend(str(a.name) for a in loose)
         if owner is None or branch is None or state.branch_record(branch) is not None:
             continue
         held = next((r for r in state.tracked_branches()
@@ -92,7 +109,7 @@ def reconcile(
 
 
     swept = _sweep(state, agents, now)
-    return Reconciled(adopted, dropped, state.compact_inbox(), switched, swept)
+    return Reconciled(adopted, dropped, state.compact_inbox(), switched, swept, registered, unregistered)
 
 
 def _sweep(state: TopicState, agents: list[Agent], now: float) -> list[str]:
