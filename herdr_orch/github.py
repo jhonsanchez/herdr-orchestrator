@@ -52,9 +52,10 @@ def parse_pr(raw: str, checks: Checks = "none") -> PullRequest | None:
 
 
 def pulls_args(branch: str) -> list[str]:
-    """gh api arguments for the branch's PRs; gh fills {owner}/{repo} from the checkout it runs in."""
-    return ["gh", "api", "-X", "GET", "repos/{owner}/{repo}/pulls",
-            "-f", f"head={{owner}}:{branch}", "-f", "state=all", "-f", "per_page=10"]
+    """gh api arguments for the branch's PRs; gh fills {owner}/{repo} from the checkout it runs in,
+    but only in the endpoint (not in -f values), so head rides in its query string."""
+    return ["gh", "api", "-X", "GET", f"repos/{{owner}}/{{repo}}/pulls?head={{owner}}:{branch}",
+            "-f", "state=all", "-f", "per_page=10"]
 
 
 def checks_args(sha: str) -> list[str]:
