@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from herdr_orch.herdr import Agent, Herdr, Workspace
+from herdr_orch.ledger import ledger_lines
 from herdr_orch.state import RunnerStatus, TopicState
 from herdr_orch.topics import Topic
 from herdr_orch.watches_core import is_unattended, open_obligations, runner_down
@@ -129,6 +130,7 @@ def build_view(
     hidden: set[tuple[str, str]] = frozenset(),  # type: ignore[assignment]
     followups: Sequence[Followup] = (),
     scope: str | None = None,
+    ledger: Sequence[str] = (),
 ) -> View:
     """Rows grouped by workspace, then agent, oldest first. `hidden` holds (pane, status)
     pairs the user skipped; such a row returns once that agent's status changes. With `scope`,
@@ -170,7 +172,7 @@ def build_view(
     lines = [_runner_line(t, now) for t in topics]
     banners += [b for b, _ in lines if b]
     shown = [s for t, (_, s) in zip(topics, lines) if s and scope in (None, t.name)]
-    return View(list(groups.values()), banners, shown, scope)
+    return View(list(groups.values()), banners, shown + list(ledger), scope)
 
 
 def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
@@ -183,6 +185,7 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
     followups: list[Followup] = []
     status_of = {a.name: a.status for a in agents if a.name}
     statuses = []
+    ledger: list[str] = []
     for topic in topics:
         state = TopicState(states, topic.name)
         items += current_items(state.inbox_lines())
@@ -193,6 +196,8 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
                                   state.tracked_branches()):
             followups.append(Followup(topic.name, o.agent, pane_of.get(o.agent, ""), o.reason, o.opened_at,
                                       topic.heartbeat_window_min, o.pr))
+        if scope in (None, topic.name):
+            ledger += [f"{topic.name}: {line}" for line in ledger_lines(state, now)]
         heartbeat = state.heartbeat_at()
         waiting = state.events_since(heartbeat if heartbeat is not None else float("-inf"))
         pending_since = waiting[0].at if waiting else None
@@ -200,7 +205,7 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
         if waiting or registered or topic.orchestrator in present:
             statuses.append(TopicStatus(topic.name, topic.orchestrator in present, heartbeat,
                                         pending_since, topic.heartbeat_window_min, state.runner_status()))
-    return build_view(items, agents, workspaces, managed, statuses, now, hidden, followups, scope)
+    return build_view(items, agents, workspaces, managed, statuses, now, hidden, followups, scope, ledger)
 
 
 def answer(states: Path, row: Row, text: str, herdr: Herdr, orchestrator: str | None = None) -> str:

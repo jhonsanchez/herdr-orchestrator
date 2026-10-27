@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 
 PrState = Literal["open", "merged", "closed"]
@@ -23,7 +23,32 @@ class PullRequest:
     merge_sha: str = ""  # the merge commit, once merged
 
 
+@dataclass(frozen=True)
+class OpenPr:
+    """An open PR as the REST sweep sees it. The list call fills the first fields; mergeable_state,
+    checks and review need the PR's own reads (pr_detail) and are empty until then."""
+    number: int
+    title: str
+    head_ref: str
+    base_ref: str
+    head_sha: str
+    author: str = ""
+    url: str = ""
+    draft: bool = False
+    mergeable_state: str = ""  # clean | dirty | behind | blocked | unstable | draft | has_hooks | unknown | ""
+    checks: Checks = "none"
+    review: str = "none"  # none | approved | changes_requested
+
+
 class GitHub(Protocol):
+    def open_pulls(self, repo_root: str) -> list[OpenPr]:
+        """Every open PR of the repo, any author: one list call. RuntimeError when GitHub cannot be asked."""
+        ...
+
+    def pr_detail(self, repo_root: str, pr: OpenPr) -> OpenPr:
+        """The PR with its mergeable_state, checks and review read in."""
+        ...
+
     def pr_for_branch(self, repo_root: str, branch: str) -> PullRequest | None:
         """The branch's PR (the open one, else the newest); None when it has none.
         RuntimeError when GitHub cannot be asked, which is not the same as no PR."""
@@ -49,6 +74,37 @@ def parse_pr(raw: str, checks: Checks = "none") -> PullRequest | None:
     state: PrState = "merged" if pick["state"] == "closed" and pick.get("merged_at") else pick["state"]
     return PullRequest(pick["number"], state, checks, pick.get("html_url", ""),
                        (pick.get("merge_commit_sha") or "") if state == "merged" else "")
+
+
+def parse_open_pulls(raw: str) -> list[OpenPr]:
+    """A REST pulls listing (state=open) as OpenPrs; mergeable_state is not in a listing."""
+    return [OpenPr(p["number"], p.get("title") or "", p["head"]["ref"], p["base"]["ref"], p["head"]["sha"],
+                   (p.get("user") or {}).get("login", ""), p.get("html_url", ""), bool(p.get("draft")))
+            for p in (json.loads(raw) if raw.strip() else [])]
+
+
+def review_of(reviews: list[dict[str, Any]]) -> str:
+    """The standing verdict of a PR's reviews: each reviewer's last APPROVED / CHANGES_REQUESTED /
+    DISMISSED counts (a comment changes nothing); any outstanding change request wins."""
+    latest: dict[str, str] = {}
+    for r in sorted(reviews, key=lambda r: str(r.get("submitted_at") or "")):
+        if r.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            latest[str((r.get("user") or {}).get("login", ""))] = str(r["state"])
+    if "CHANGES_REQUESTED" in latest.values():
+        return "changes_requested"
+    return "approved" if "APPROVED" in latest.values() else "none"
+
+
+def open_pulls_args() -> list[str]:
+    return ["gh", "api", "-X", "GET", "repos/{owner}/{repo}/pulls", "-f", "state=open", "-f", "per_page=100"]
+
+
+def pull_args(number: int) -> list[str]:
+    return ["gh", "api", "-X", "GET", f"repos/{{owner}}/{{repo}}/pulls/{number}"]
+
+
+def reviews_args(number: int) -> list[str]:
+    return ["gh", "api", "-X", "GET", f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews", "-f", "per_page=100"]
 
 
 def pulls_args(branch: str) -> list[str]:
@@ -92,3 +148,14 @@ class CliGitHub:
         runs = json.loads(self._api(checks_args(sha), repo_root))
         status = json.loads(self._api(status_args(sha), repo_root))
         return PullRequest(pr.number, pr.state, checks_of(rollup_of(runs, status)), pr.url, pr.merge_sha)
+
+    def open_pulls(self, repo_root: str) -> list[OpenPr]:
+        return parse_open_pulls(self._api(open_pulls_args(), repo_root))
+
+    def pr_detail(self, repo_root: str, pr: OpenPr) -> OpenPr:
+        detail = json.loads(self._api(pull_args(pr.number), repo_root))
+        runs = json.loads(self._api(checks_args(pr.head_sha), repo_root))
+        status = json.loads(self._api(status_args(pr.head_sha), repo_root))
+        reviews = json.loads(self._api(reviews_args(pr.number), repo_root))
+        return replace(pr, mergeable_state=str(detail.get("mergeable_state") or ""),
+                       checks=checks_of(rollup_of(runs, status)), review=review_of(reviews))

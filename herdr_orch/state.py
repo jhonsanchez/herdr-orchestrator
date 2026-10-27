@@ -136,6 +136,18 @@ class TopicState:
         self._write_branch({**record, "pr": pr, "pr_state": pr_state, "checks": checks, "pr_since": now,
                             "merge_sha": merge_sha or record.get("merge_sha")})
 
+    def set_ledger(self, branch: str, entry: dict[str, object], now: float) -> bool:
+        """Store a branch's computed ledger entry; its `since` is kept while the entry is unchanged.
+        True when the entry changed (or was new)."""
+        record = self.branch_record(branch)
+        if record is None:
+            return False
+        old = record.get("ledger")
+        if isinstance(old, dict) and {k: v for k, v in old.items() if k != "since"} == entry:
+            return False
+        self._write_branch({**record, "ledger": {**entry, "since": now}})
+        return True
+
     def mark_deployed(self, branch: str) -> None:
         record = self.branch_record(branch)
         if record is not None:
@@ -173,6 +185,31 @@ class TopicState:
         if not self.branches.is_dir():
             return []
         return [json.loads(p.read_text()) for p in sorted(self.branches.glob("*.json"))]
+
+    # Untracked PRs: open PRs of a Topic's repos that no tracked branch owns, from the last sweep.
+    @property
+    def untracked(self) -> Path:
+        return self.dir / "untracked.json"
+
+    def untracked_prs(self) -> list[dict[str, object]]:
+        try:
+            prs: list[dict[str, object]] = json.loads(self.untracked.read_text())
+            return prs
+        except (OSError, ValueError):
+            return []
+
+    def set_untracked(self, prs: list[dict[str, object]], now: float) -> None:
+        """Replace the list; a PR whose state is unchanged keeps its `since`."""
+        before = {(p["repo"], p["number"]): p for p in self.untracked_prs()}
+        out = []
+        for p in prs:
+            old = before.get((p["repo"], p["number"]))
+            same = old is not None and all(old.get(k) == p[k] for k in ("state", "waiting_on", "owner"))
+            out.append({**p, "since": old["since"] if same and old else now})
+        self.dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.untracked.with_suffix(".tmp")
+        tmp.write_text(json.dumps(out))
+        tmp.replace(self.untracked)
 
     def untrack(self, branch: str) -> None:
         self._branch_file(branch).unlink(missing_ok=True)
