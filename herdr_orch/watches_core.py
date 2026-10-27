@@ -27,6 +27,13 @@ def agent_changes(prev: dict[str, str], now: dict[str, str], managed: set[str]) 
     return out
 
 
+def resumed_items(items: Sequence[dict[str, Any]], prev: dict[str, str], now: dict[str, str]) -> list[str]:
+    """Ids of open agent-addressed Inbox items whose agent started a turn since the last tick.
+    An agent that asked ended its turn; working again means the answer reached it, however it came."""
+    started = {n for n, s in now.items() if s == "working" and prev.get(n, "working") != "working"}
+    return [str(i["id"]) for i in items if i.get("to", "agent") == "agent" and i.get("agent") in started]
+
+
 @dataclass
 class _Seen:
     content: str
@@ -139,8 +146,11 @@ def open_obligations(
         o = pr_obligation(b, statuses)
         if o is not None:
             found.append(o)
+    released = {e.text[: -len(" released")]: e.at for e in events if e.source == "released"}
     out = []
     for o in found:
+        if released.get(o.agent, float("-inf")) >= o.opened_at:
+            continue  # its branch was released after: nothing left to follow up
         if o.reason == "gone" and o.agent in statuses:
             continue  # the name is back: seated again
         if statuses.get(o.agent) == "working" and o.reason != "gone":

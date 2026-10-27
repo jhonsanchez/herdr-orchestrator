@@ -13,12 +13,13 @@ import subprocess
 import time
 from typing import Callable, Protocol
 
+from herdr_orch.attention import current_items
 from herdr_orch.github import GitHub
 from herdr_orch.herdr import Agent, Herdr
 from herdr_orch.seating import release
 from herdr_orch.state import Event, TopicState
 from herdr_orch.topics import Topic
-from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations, pr_change
+from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations, pr_change, resumed_items
 
 GONE_GRACE_S = 60.0  # how long the Orchestrator may be missing before the runner gives up
 DEPLOY_POLL_SECONDS = 30.0
@@ -94,6 +95,8 @@ class Runner:
         for pane, name in managed.items():
             if name in self._prev and not any(a.name == name and a.pane_id == pane for a in agents.values()):
                 self.state.give_back(pane)
+        for item_id in resumed_items(current_items(self.state.inbox_lines()), self._prev, statuses):
+            self.state.resolve(item_id, "resolved", "(agent resumed)")
         self._prev = statuses
 
         for pane, name in managed.items():

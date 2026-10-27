@@ -11,6 +11,7 @@ from herdr_orch.attention import current_items
 from herdr_orch.herdr import Agent, Herdr
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic, topic_for
+from herdr_orch.watches_core import _ending, open_obligations
 
 
 SWITCH_PREFIX = "switch-"
@@ -32,12 +33,14 @@ class Reconciled:
     dropped: list[str]  # Registry entries removed (agent names)
     compacted: int  # Inbox lines removed
     switched: list[str] = field(default_factory=list)  # branches an agent moved to inside a tracked workspace
+    swept: list[str] = field(default_factory=list)  # agents whose open follow-ups or questions were dropped
 
     def summary(self) -> str:
         return (f"adopted {len(self.adopted)} branch(es){_list(self.adopted)}, "
                 f"dropped {len(self.dropped)} Registry entr{'y' if len(self.dropped) == 1 else 'ies'}{_list(self.dropped)}, "
                 f"compacted {self.compacted} Inbox line(s), "
-                f"flagged {len(self.switched)} switched branch(es){_list(self.switched)}")
+                f"flagged {len(self.switched)} switched branch(es){_list(self.switched)}, "
+                f"swept rows of {len(self.swept)} vanished agent(s){_list(self.swept)}")
 
 
 def _list(items: list[str]) -> str:
@@ -87,7 +90,30 @@ def reconcile(
         if str(item["id"]).startswith(SWITCH_PREFIX) and item["id"] not in flagged:
             state.resolve(str(item["id"]), "resolved")
 
-    return Reconciled(adopted, dropped, state.compact_inbox(), switched)
+
+    swept = _sweep(state, agents, now)
+    return Reconciled(adopted, dropped, state.compact_inbox(), switched, swept)
+
+
+def _sweep(state: TopicState, agents: list[Agent], now: float) -> list[str]:
+    """Drop the rows of agents that are not live, not Managed and own no tracked branch: nobody is left to
+    follow up with or to answer. Their gone Events are closed; their open Inbox items are dismissed."""
+    live = {a.name for a in agents if a.name}
+    owned = {str(r.get("agent")) for r in state.tracked_branches()} | set(state.managed().values())
+    items = current_items(state.inbox_lines())
+    endings = (_ending(e) for e in state.events_since(float("-inf")))
+    names = {e[0] for e in endings if e and e[1] == "gone"} | {str(i["agent"]) for i in items if i.get("agent")}
+    swept = []
+    for agent in sorted(names - live - owned):
+        pending = [o for o in open_obligations(state.events_since(float("-inf")), [], {}, set()) if o.agent == agent]
+        mine = [i for i in items if i.get("agent") == agent]
+        if not (pending or mine):
+            continue
+        state.append_event("released", f"{agent} released", now)
+        for i in mine:
+            state.resolve(str(i["id"]), "dismissed")
+        swept.append(agent)
+    return swept
 
 
 def _flag_switch(state: TopicState, owner: Agent, label: str, workspace_id: str, branch: str, held: str,

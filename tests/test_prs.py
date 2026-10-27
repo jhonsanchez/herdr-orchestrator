@@ -335,3 +335,12 @@ class ReleaseTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_release_closes_the_agents_followups_and_open_questions(self) -> None:
+        self.github.prs["issue-1"] = PullRequest(20, "closed", "none")
+        self.state.append_event("agents", "issue-1 gone", 5.0)
+        self.state.escalate("issue-1", "w9:p1", "question", "which?", [], 6.0)
+        release(self.state, self.herdr, self.github, "issue-1", now=10.0)
+        self.assertEqual(open_obligations(self.state.events_since(float("-inf")), [], {}, set()), [])
+        self.assertEqual([i for i in self.state.inbox_lines() if i["status"] == "open"], [])
+
