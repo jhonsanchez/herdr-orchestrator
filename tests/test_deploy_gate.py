@@ -121,3 +121,38 @@ class PluginDeployTest(unittest.TestCase):
         state.record_runner(child.pid, 1.0, 1)
         self.assertTrue(is_deployed(self.sha, self.plugins, state))
         self.assertFalse(is_deployed("0" * 40, self.plugins, state))
+
+
+class AutoReleaseTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = TopicState(Path(self.tmp.name), "waki")
+        self.state.take("w1:p1", "issue-1")
+        self.state.track_branch("issue-1", "issue-1", "/r", "w9", now=0)
+        self.herdr = FakeHerdr()
+        self.herdr.agent_list = [Agent("issue-1", "idle", "w1:p1", "w1"), Agent("orch-waki", "working", "w2:p1", "w2")]
+        self.github = FakeGitHub()
+        topic = Topic(name="waki", dir=Path(self.tmp.name) / "cfg")  # no deploy_check
+        self.runner = Runner(topic, self.state, self.herdr, Quiet(), notify=lambda t, b: None, github=self.github)
+
+    def released(self) -> bool:
+        return self.state.branch_record("issue-1") is None
+
+    def test_validated_and_merged_is_released_without_a_deploy_gate(self) -> None:
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc")
+        self.state.mark_validated("issue-1", 0)
+        self.runner.tick(1)
+        self.assertTrue(self.released())
+        self.assertEqual(self.herdr.of("worktree_remove"), [("worktree_remove", "w9")])
+        self.assertEqual(self.state.managed(), {})
+        self.assertIn("released", [e.source for e in self.state.events_since(0)])
+
+    def test_not_validated_or_github_down_keeps_it(self) -> None:
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc")
+        self.runner.tick(1)
+        self.assertFalse(self.released())
+        self.state.mark_validated("issue-1", 1)
+        self.github.down = True
+        self.runner.tick(1 + PR_POLL_SECONDS)
+        self.assertFalse(self.released())

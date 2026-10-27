@@ -15,6 +15,7 @@ from typing import Callable, Protocol
 
 from herdr_orch.github import GitHub
 from herdr_orch.herdr import Agent, Herdr
+from herdr_orch.seating import release
 from herdr_orch.state import Event, TopicState
 from herdr_orch.topics import Topic
 from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations, pr_change
@@ -103,6 +104,7 @@ class Runner:
 
         self._follow_prs(now)
         self._await_deploys(now, agents)
+        self._release_validated(now)
 
         self.watches.poll(now)
         for watch, line in self.watches.lines():
@@ -167,6 +169,21 @@ class Runner:
             if pr is not None and text is not None:
                 self.state.append_event("pr", text, now)
                 self.state.set_pr(str(branch["branch"]), pr.number, pr.state, pr.checks, now, pr.merge_sha)
+
+    def _release_validated(self, now: float) -> None:
+        """Release a validated branch whose PR is merged or closed. It never waits for the deploy
+        gate: the agent validates after it, and a branch merged before the gate existed has none."""
+        if self.github is None:
+            return
+        for branch in self.state.tracked_branches():
+            if "validated_at" not in branch or branch.get("pr_state") not in ("merged", "closed"):
+                continue
+            name = str(branch["branch"])
+            try:
+                release(self.state, self.herdr, self.github, name)
+            except (RuntimeError, ValueError):
+                continue  # GitHub cannot say, or the PR is open again: keep it, try next tick
+            self.state.append_event("released", f"{name} released: validated and its PR is {branch['pr_state']}", now)
 
     def _deployed(self, branch: dict[str, object]) -> bool:
         env = {**os.environ, "HERDR_ORCH_MERGE_SHA": str(branch["merge_sha"]), "HERDR_ORCH_TOPIC": self.topic.name,
