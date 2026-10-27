@@ -22,7 +22,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from herdr_orch.deploy import is_deployed, plugins_dir
+from herdr_orch.deploy import is_deployed, newer_install, plugins_dir
 from herdr_orch.handover import give_back, take
 from herdr_orch.herdr import CliHerdr, Herdr, find_key
 from herdr_orch.notify import notifier_for, stop_hooks
@@ -232,7 +232,8 @@ def main(
             home = env.get("HOME") or str(Path.home())
             return 0 if is_deployed(args.sha, plugins_dir(env, home), state) else 1
         elif args.cmd == "start":
-            if not start(topic, state, herdr, ensure_link(CLI, env.get("HOME") or str(Path.home()))):
+            home = env.get("HOME") or str(Path.home())
+            if not start(topic, state, herdr, ensure_link(CLI, home, plugins_dir(env, home))):
                 return 1
         elif args.cmd == "inbox":
             pane = next((p for p, n in state.managed().items() if n == args.agent), None) or next(
@@ -243,7 +244,8 @@ def main(
         elif args.cmd == "seat":
             seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"),
                           existing=args.existing, now=now,
-                          cli=ensure_link(CLI, env.get("HOME") or str(Path.home())))
+                          cli=ensure_link(CLI, env.get("HOME") or str(Path.home()),
+                                          plugins_dir(env, env.get("HOME") or str(Path.home()))))
             print(f"{seated.name} {seated.pane_id}")
         elif args.cmd == "release":
             release(state, herdr, CliGitHub(), args.branch)
@@ -254,7 +256,7 @@ def main(
         elif args.cmd == "reconcile":
             print(reconcile(topic, state, herdr, now(), home=env.get("HOME")).summary())
         elif args.cmd == "watch":
-            _watch(topic, state, herdr, now)
+            _watch(topic, state, herdr, now, env)
     except (ValueError, RuntimeError, TimeoutError) as e:
         print(e, file=sys.stderr)
         return 1
@@ -287,7 +289,22 @@ def _stop(signum: int, frame: object) -> None:
     raise SystemExit(0)
 
 
-def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], float]) -> None:
+def _reexec_if_updated(topic: Topic, env: Mapping[str, str], watches: Supervisor, state: TopicState) -> None:
+    """Between ticks: when a newer install sits next to the one running, repoint the stable link at it and
+    re-exec the runner through that link, so an update needs no manual restart. Returns when there is none."""
+    home = env.get("HOME") or str(Path.home())
+    plugins = plugins_dir(env, home)
+    if not newer_install(plugins, CLI):
+        return
+    link = ensure_link(CLI, home, plugins)
+    print(f"newer install found: restarting the Watch runner from {Path(link).resolve()}", flush=True)
+    watches.stop()
+    state.clear_runner(os.getpid())
+    os.execve(link, [link, "watch", topic.name], {k: v for k, v in os.environ.items() if k != "PYTHONPATH"})
+
+
+def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], float],
+           env: Mapping[str, str] = os.environ) -> None:
     """Runs until stopped, or until its Orchestrator has been gone a grace period. herdr requires
     plugins to stop their children on exit, so SIGTERM and SIGHUP stop the Watches too."""
     existing = state.runner_status()
@@ -320,6 +337,7 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
                 watches.poll(now())
             if runner.done:
                 break
+            _reexec_if_updated(topic, env, watches, state)
             time.sleep(TICK_SECONDS)
     except KeyboardInterrupt:
         pass

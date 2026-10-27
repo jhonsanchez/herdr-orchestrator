@@ -19,6 +19,20 @@ def installed_checkout(plugins_dir: Path) -> Path | None:
     return max(bins, key=lambda b: b.stat().st_mtime).parent.parent if bins else None
 
 
+def newest_cli(plugins_dir: Path) -> str | None:
+    """The newest installed bin/herdr-orch, as herdr laid it out (not resolved)."""
+    checkout = installed_checkout(plugins_dir)
+    return str(checkout / "bin" / "herdr-orch") if checkout else None
+
+
+def newer_install(plugins_dir: Path, running_cli: str) -> str | None:
+    """The newest installed bin/herdr-orch when it is a different file, modified after the one running; else None."""
+    newest = newest_cli(plugins_dir)
+    if newest is None or Path(newest).resolve() == Path(running_cli).resolve():
+        return None
+    return newest if Path(newest).stat().st_mtime > Path(running_cli).stat().st_mtime else None
+
+
 def _git(checkout: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", "-C", str(checkout), *args], capture_output=True, text=True, timeout=30)
 

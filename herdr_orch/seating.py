@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 from herdr_orch.attention import current_items
+from herdr_orch.deploy import newest_cli
 from herdr_orch.github import GitHub
 from herdr_orch.herdr import Herdr
 from herdr_orch.state import TopicState
@@ -206,9 +207,11 @@ def start(
     return _brief(topic, state, herdr, cmd, root_pane, started, say)
 
 
-def ensure_link(cli: str, home: str) -> str:
+def ensure_link(cli: str, home: str, plugins: Path | None = None) -> str:
     """The stable ~/.local/bin/herdr-orch that briefs name: herdr keeps a new install directory per update,
-    so a versioned path goes stale. Create or repoint the symlink at the running install; return its path."""
+    so a versioned path goes stale. Create or repoint the symlink at the newest install (the running one
+    when there is none under plugins, which may be older); return its path."""
+    cli = (newest_cli(plugins) if plugins else None) or cli
     link = Path(home) / ".local" / "bin" / "herdr-orch"
     if not (link.is_symlink() and Path(os.readlink(link)) == Path(cli)):
         link.parent.mkdir(parents=True, exist_ok=True)
