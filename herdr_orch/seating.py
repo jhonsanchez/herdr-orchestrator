@@ -184,10 +184,11 @@ def start(
     cmd = _orchestrator_cmd(cli, topic, state)
     seated = next((a for a in herdr.agents() if a.name == name), None)
     if seated is not None:
+        # A runner killed since (a plugin update, a crash) is respawned here; a no-op while one is alive.
+        spawn(cli, topic, state)
         if state.briefed.exists():
             return True
         # A start that died after seating the Orchestrator left it unbriefed: finish the job.
-        spawn(cli, topic, state)  # a no-op while a runner is alive
         return _brief(topic, state, herdr, cmd, seated.pane_id, True, say)
     if not topic.has_yours_alone():
         raise ValueError(f"{topic.playbook_path} needs a '## Yours alone' section before its Orchestrator starts")

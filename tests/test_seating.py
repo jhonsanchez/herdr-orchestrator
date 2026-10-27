@@ -246,11 +246,11 @@ class SeatingTest(unittest.TestCase):
         start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn)
         self.assertTrue(self.state.briefed.exists())
 
-    def test_start_does_nothing_when_the_orchestrator_already_runs(self) -> None:
+    def test_start_respawns_the_runner_and_touches_nothing_else_when_the_orchestrator_is_briefed(self) -> None:
         self.state.mark_briefed()
         self.herdr.agent_list = [Agent("orch-zebra", "idle", "w5:p1", "w5")]
         start(self.topic, self.state, self.herdr, cli="/opt/plug/bin/herdr-orch", spawn=self.spawn)
-        self.assertEqual(self.herdr.calls, [])
+        self.assertEqual(self.herdr.calls, [("spawn",)])
 
 
 if __name__ == "__main__":
