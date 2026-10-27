@@ -246,7 +246,8 @@ class AutoReleaseTest(unittest.TestCase):
         self.assertTrue(self.released())
         self.assertEqual(self.herdr.of("worktree_remove"), [("worktree_remove", "w9")])
         self.assertEqual(self.state.managed(), {})
-        self.assertIn("released", [e.source for e in self.state.events_since(0)])
+        [event] = [e for e in self.state.events_since(0) if e.source == "released"]
+        self.assertEqual(event.text, "issue-1 released: validated and its PR is merged")
 
     def test_a_release_that_raises_does_not_starve_the_tick_and_is_followed_up_once(self) -> None:
         notes: list[tuple[str, str]] = []

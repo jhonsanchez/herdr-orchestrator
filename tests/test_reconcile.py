@@ -110,6 +110,9 @@ class ReconcileTest(unittest.TestCase):
         self.state.escalate("issue-40", "w9:p1", "question", "live pane", [], 6.0)
         self.herdr.agent_list.append(Agent("issue-40", "idle", "w9:p1", "w9"))
         self.assertEqual(self.run_it().swept, ["None"])
+        events = [(e.source, e.text) for e in self.state.events_since(0)]
+        self.assertNotIn("released", [s for s, _ in events])
+        self.assertIn(("swept", "None swept: its pane is gone and its agent is not live"), events)
         [item] = [i for i in self.state.inbox_lines() if i["status"] == "open"]
         self.assertEqual(item["agent"], "issue-40")
         self.assertEqual(self.run_it().swept, [])

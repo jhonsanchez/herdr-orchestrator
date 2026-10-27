@@ -111,7 +111,7 @@ def _sweep(state: TopicState, agents: list[Agent], now: float) -> list[str]:
         mine = [i for i in items if i.get("agent") == agent]
         if not (pending or mine):
             continue
-        state.append_event("released", f"{agent} released", now)
+        state.append_event("swept", f"{agent} swept: its pane is gone and its agent is not live", now)
         for i in mine:
             state.resolve(str(i["id"]), "dismissed", "swept: its pane is gone and its agent is not live")
         swept.append(agent)

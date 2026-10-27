@@ -149,7 +149,7 @@ def open_obligations(
         if "validated_at" in b and not str(b.get("evidence") or "").strip():
             found.append(Obligation(str(b["agent"]), f"{b['branch']} validated without evidence",
                                     float(b["validated_at"]), pr=True))
-    released = {e.text[: -len(" released")]: e.at for e in events if e.source == "released"}
+    released = {e.text.partition(" ")[0]: e.at for e in events if e.source in ("released", "swept")}
     out = []
     for o in found:
         if released.get(o.agent, float("-inf")) >= o.opened_at:
