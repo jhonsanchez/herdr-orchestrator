@@ -54,6 +54,21 @@ class ReconcileTest(unittest.TestCase):
         self.assertIn("issue-45", str(item["question"]))
         self.assertIn("seat issue-45 separately", str(item["question"]))
 
+    def test_the_switch_flag_is_one_item_per_workspace_and_branch_named_by_label_and_resolved_when_moot(self) -> None:
+        # #65: five runner starts left five items reading "None switched to issue-35".
+        self.herdr.workspace_list.append(Workspace("w9", "fix-error", REPO, "/wt/issue-35"))
+        self.herdr.agent_list.append(Agent(None, "idle", "w9:p1", "w9"))
+        self.state.track_branch("fix-error", "other", REPO, "w9", 5.0)
+        self.branches["/wt/issue-35"] = "issue-35"
+        for _ in range(3):
+            self.run_it()
+        [item] = [i for i in self.state.inbox_lines() if i["status"] == "open"]
+        self.assertEqual(item["id"], "switch-w9-issue-35")
+        self.assertIn("fix-error switched to issue-35", str(item["question"]))
+        self.herdr.workspace_list.clear()  # workspace released
+        self.run_it()
+        self.assertEqual([i for i in self.state.inbox_lines() if i["status"] == "open"], [])
+
     def test_an_existing_record_is_left_alone_and_a_second_pass_changes_nothing(self) -> None:
         self.seat("w3", "issue-26", "/wt/issue-26")
         self.state.track_branch("issue-26", "issue-26", REPO, "w3", 5.0)
