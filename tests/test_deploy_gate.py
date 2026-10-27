@@ -70,9 +70,9 @@ class DeployGateTest(unittest.TestCase):
         self.assertEqual(self.prompts(), [])
 
     def test_parse_pr_reads_the_merge_commit(self) -> None:
-        raw = '[{"number":3,"state":"MERGED","url":"u","mergeCommit":{"oid":"abc"},"statusCheckRollup":[]}]'
+        raw = '[{"number":3,"state":"closed","merged_at":"t","html_url":"u","merge_commit_sha":"abc"}]'
         self.assertEqual(parse_pr(raw).merge_sha, "abc")  # type: ignore[union-attr]
-        raw = '[{"number":3,"state":"OPEN","url":"u","mergeCommit":null,"statusCheckRollup":[]}]'
+        raw = '[{"number":3,"state":"open","merged_at":null,"html_url":"u","merge_commit_sha":"zzz"}]'
         self.assertEqual(parse_pr(raw).merge_sha, "")  # type: ignore[union-attr]
 
 
