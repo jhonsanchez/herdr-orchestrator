@@ -4,6 +4,7 @@ The curses layer only draws what this returns."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -88,6 +89,7 @@ class View:
     banners: list[str]
     status: list[str] = field(default_factory=list)  # liveness lines, shown dim
     scope: str | None = None  # the one Topic whose rows are shown; None: every Topic
+    ledger: list[str] = field(default_factory=list)  # standing waits, one line each
 
     def rows(self) -> list[Row]:
         return [r for g in self.groups for r in g.rows]
@@ -124,6 +126,16 @@ def _runner_line(t: TopicStatus, now: float) -> tuple[str | None, str | None]:
     if not t.orchestrator_present:
         return None, None
     return f"Topic {t.name}: its Watch runner is not running, so no Events are collected", None
+
+
+def ledger_summary(lines: Sequence[str]) -> str:
+    """The ledger as one line: how many standing waits per state."""
+    counts: dict[str, int] = {}
+    for line in lines:
+        m = re.search(r": waiting on (\S+)", line)
+        key = f"waiting on {m.group(1)}" if m else "working"
+        counts[key] = counts.get(key, 0) + 1
+    return "Ledger: " + ", ".join(f"{n} {k}" for k, n in counts.items()) if counts else ""
 
 
 def _when(row: Row) -> float:
@@ -178,7 +190,7 @@ def build_view(
     lines = [_runner_line(t, now) for t in topics]
     banners += [b for b, _ in lines if b]
     shown = [s for t, (_, s) in zip(topics, lines) if s and scope in (None, t.name)]
-    return View(list(groups.values()), banners, shown + list(ledger), scope)
+    return View(list(groups.values()), banners, shown, scope, list(ledger))
 
 
 def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,

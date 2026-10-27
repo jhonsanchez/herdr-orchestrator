@@ -241,4 +241,4 @@ class RunnerLedgerTest(unittest.TestCase):
         self.runner.tick(1000)
         self.state.touch_heartbeat(1000)
         view = load(Path(self.tmp.name), [self.topic], self.herdr, 1300)
-        self.assertIn("waki: untracked PR #646 (WAKI-12): waiting on ci (runner) 5m", view.status)
+        self.assertIn("waki: untracked PR #646 (WAKI-12): waiting on ci (runner) 5m", view.ledger)

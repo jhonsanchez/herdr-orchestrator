@@ -11,13 +11,24 @@ import textwrap
 from pathlib import Path
 from typing import Callable
 
-from herdr_orch.attention import OTHER, Row, View, answer, dismiss, load, open_pane
+from herdr_orch.attention import OTHER, Row, View, answer, dismiss, ledger_summary, load, open_pane
 from herdr_orch.herdr import Herdr
 from herdr_orch.topics import Topic
 
 REFRESH_MS = 2000
 SCOPE_ENV = "HERDR_ORCH_ATTENTION_TOPIC"  # set when the pane is opened beside a Topic's Orchestrator
+ROWS_MIN = 3  # rows kept on screen however much else competes for room
+DETAIL_MIN = 8  # the detail's reserved height: rule, a wrapped title and the options
 ICONS = {"decision": "?", "question": "?", "permission": "!", "blocked": "◐", "done": "✓", "followup": "↻"}
+
+
+def scroll_top(top: int, selected: int, visible: int, total: int) -> int:
+    """The first line of a `visible`-line window over `total` lines that keeps `selected` in view."""
+    if selected < top:
+        top = selected
+    elif selected >= top + visible:
+        top = selected - visible + 1
+    return max(min(top, total - visible), 0)
 
 
 def _age(row: Row, now: float) -> str:
@@ -43,6 +54,8 @@ class App:
         self.detail_y = 0  # first screen row of the detail pane
         self.detail_off = 0
         self.detail_for = -1
+        self.top = 0  # first drawn line of the row area
+        self.ledger_open = False
 
     def refresh(self) -> None:
         try:
@@ -59,15 +72,20 @@ class App:
         return rows[self.selected] if rows else None
 
     # Drawing
+    def scroll_rows(self, step: int) -> None:
+        if not self.choosing:
+            self.selected = min(max(self.selected + step, 0), self.last())
+
     def draw(self, scr: curses.window) -> None:
         scr.erase()
         height, width = scr.getmaxyx()
         y = 0
         self.hits = []
+        footer = height - 1
 
         def put(text: str, attr: int = 0) -> None:
             nonlocal y
-            if y < height - 1:
+            if y < footer:
                 scr.addnstr(y, 0, text, width - 1, attr)
                 y += 1
 
@@ -80,59 +98,88 @@ class App:
             put(f"⚠ {banner}", curses.A_BOLD | curses.color_pair(1))
         for line in self.view.status:
             put(f"· {line}", curses.A_DIM)
+        if self.view.ledger:
+            if y < footer:
+                self.hits.append((y, 0, width, "key", ord("l")))
+            put(f"{'▾' if self.ledger_open else '▸'} {ledger_summary(self.view.ledger)}  [l]", curses.A_DIM)
+            if self.ledger_open:
+                room = max(footer - y - ROWS_MIN - DETAIL_MIN, 0)
+                shown = self.view.ledger if len(self.view.ledger) <= room else self.view.ledger[: max(room - 1, 0)]
+                for line in shown:
+                    put(f"  · {line}", curses.A_DIM)
+                if len(shown) < len(self.view.ledger):
+                    put(f"  … {len(self.view.ledger) - len(shown)} more", curses.A_DIM)
         rows = self.view.rows()
         if not rows:
             put("Nothing needs you.", curses.A_DIM)
-        now = self.now()
+
+        detail = self.detail_lines(width)
+        flat: list[tuple[str, int]] = []  # the row area's lines: ("group", _) or ("row", index)
         index = 0
         for group in self.view.groups:
-            put(f"▾ {group.label}", curses.A_BOLD)
-            for row in group.rows:
-                marker = "❯" if index == self.selected else " "
-                attr = curses.A_REVERSE if index == self.selected and not self.choosing else 0
-                guess = " (guess)" if row.guess else ""
-                if y < height - 1:
-                    self.hits.append((y, 0, width, "row", index))
-                put(f" {marker} {ICONS.get(row.kind, '·')} {row.agent:<16} {row.kind:<10} {_age(row, now):>4}  {row.text}{guess}", attr)
+            flat.append((group.label, -1))
+            for _ in group.rows:
+                flat.append(("", index))
                 index += 1
+        body = max(footer - y, 0)
+        detail_h = min(1 + len(detail), max(DETAIL_MIN, body - len(flat))) if rows else 0
+        detail_h = min(detail_h, max(body - ROWS_MIN, 0)) if body >= ROWS_MIN + 1 else min(detail_h, 1)
+        area = body - detail_h
+        sel_line = next((i for i, (_, r) in enumerate(flat) if r == self.selected), 0)
+        self.top = scroll_top(self.top, sel_line, area, len(flat))
+        flat_rows = [r for g in self.view.groups for r in g.rows]
+        now = self.now()
+        for label_or_blank, r in flat[self.top: self.top + area]:
+            if r < 0:
+                put(f"▾ {label_or_blank}", curses.A_BOLD)
+                continue
+            row = flat_rows[r]
+            marker = "❯" if r == self.selected else " "
+            attr = curses.A_REVERSE if r == self.selected and not self.choosing else 0
+            guess = " (guess)" if row.guess else ""
+            self.hits.append((y, 0, width, "row", r))
+            put(f" {marker} {ICONS.get(row.kind, '·')} {row.agent:<16} {row.kind:<10} {_age(row, now):>4}  {row.text}{guess}", attr)
 
-        detail_top = max(y + 1, height // 2)
-        y = detail_top
-        if y < height - 1:
+        y = footer - detail_h
+        if detail_h:
             scr.hline(y, 0, curses.ACS_HLINE, width)
             y += 1
         self.detail_y = y
-        chosen = self.current()
-        if chosen is not None:
-            row = chosen
-            lines: list[tuple[str, int, int | None]] = [
-                (line, curses.A_BOLD, None) for line in textwrap.wrap(f"{row.agent} · {row.text}", width - 2) or [""]]
-            for i, choice in enumerate(row.choices):
-                marker = "❯" if self.choosing and i == self.option else " "
-                attr = curses.A_REVERSE if self.choosing and i == self.option else 0
-                lines.append((f" {marker} {i + 1}. {choice}", attr, i))
-            if not row.answerable:
-                lines.append(("   Answer it in the agent's own pane: press o.", curses.A_DIM, None))
-            if self.detail_for != self.selected:
-                self.detail_for, self.detail_off = self.selected, 0
-            self.detail_off = max(min(self.detail_off, len(lines) - (height - 1 - y)), 0)
-            for text, attr, option in lines[self.detail_off:]:
-                if option is not None and y < height - 1:
-                    self.hits.append((y, 0, width, "option", option))
-                put(text, attr)
+        if self.detail_for != self.selected:
+            self.detail_for, self.detail_off = self.selected, 0
+        visible = detail_h - 1
+        self.detail_off = max(min(self.detail_off, len(detail) - visible), 0)
+        for text, attr, option in detail[self.detail_off: self.detail_off + max(visible, 0)]:
+            if option is not None:
+                self.hits.append((y, 0, width, "option", option))
+            put(text, attr)
         buttons = [("[↑↓] choose", None), ("[enter] send", 10), ("[esc] back", 27)] if self.choosing else [
-            ("[enter] answer", 10), ("[o] open pane", ord("o")), ("[s] skip", ord("s")),
+            ("[enter] answer", 10), ("[o] open pane", ord("o")), ("[s] skip", ord("s")), ("[l] ledger", ord("l")),
             ("[r] refresh", ord("r")), ("[q] quit", ord("q"))]
         if self.message:
-            scr.addnstr(height - 1, 0, self.message[: width - 1], width - 1, curses.A_DIM)
+            scr.addnstr(footer, 0, self.message[: width - 1], width - 1, curses.A_DIM)
         else:
             x = 0
             for text, key in buttons:
                 if key is not None:
-                    self.hits.append((height - 1, x, x + len(text), "key", key))
+                    self.hits.append((footer, x, x + len(text), "key", key))
                 x += len(text) + 2
-            scr.addnstr(height - 1, 0, "  ".join(t for t, _ in buttons)[: width - 1], width - 1, curses.A_DIM)
+            scr.addnstr(footer, 0, "  ".join(t for t, _ in buttons)[: width - 1], width - 1, curses.A_DIM)
         scr.refresh()
+
+    def detail_lines(self, width: int) -> list[tuple[str, int, int | None]]:
+        row = self.current()
+        if row is None:
+            return []
+        lines: list[tuple[str, int, int | None]] = [
+            (line, curses.A_BOLD, None) for line in textwrap.wrap(f"{row.agent} · {row.text}", width - 2) or [""]]
+        for i, choice in enumerate(row.choices):
+            marker = "❯" if self.choosing and i == self.option else " "
+            attr = curses.A_REVERSE if self.choosing and i == self.option else 0
+            lines.append((f" {marker} {i + 1}. {choice}", attr, i))
+        if not row.answerable:
+            lines.append(("   Answer it in the agent's own pane: press o.", curses.A_DIM, None))
+        return lines
 
     def ask_text(self, scr: curses.window, prompt: str) -> str:
         height, width = scr.getmaxyx()
@@ -160,8 +207,8 @@ class App:
             step = -1 if state & wheel_up else 1
             if y >= self.detail_y:
                 self.detail_off = max(self.detail_off + step, 0)
-            elif not self.choosing:
-                self.selected = min(max(self.selected + step, 0), self.last())
+            else:
+                self.scroll_rows(step)
             return True
         double = bool(state & curses.BUTTON1_DOUBLE_CLICKED)
         if not state & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
@@ -217,6 +264,8 @@ class App:
             self.selected = min(self.selected + 1, self.last())
         elif key == ord("r"):
             self.refresh()
+        elif key == ord("l"):
+            self.ledger_open = not self.ledger_open
         elif key == ord("a") and self.home_scope:
             self.scope = None if self.scope else self.home_scope
             self.selected = 0
