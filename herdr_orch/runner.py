@@ -15,7 +15,7 @@ from typing import Callable, Protocol
 
 from herdr_orch.attention import current_items
 from herdr_orch.github import GitHub
-from herdr_orch.herdr import Agent, AgentBlocked, Herdr
+from herdr_orch.herdr import Agent, AgentBlocked, AgentBusy, Herdr
 from herdr_orch.seating import release
 from herdr_orch.state import Event, TopicState
 from herdr_orch.topics import Topic
@@ -25,6 +25,7 @@ GONE_GRACE_S = 60.0  # how long the Orchestrator may be missing before the runne
 DEPLOY_POLL_SECONDS = 30.0
 DEPLOY_CHECK_TIMEOUT_S = 60
 READY = ("idle", "done")
+TYPING_ALERT_S = 300.0  # Events held this long behind text in the Orchestrator's input box are worth a notification
 BLOCKED_ALERT_S = 300.0  # an agent blocked this long is waiting at a dialog nobody answered
 PR_POLL_SECONDS = 120.0  # gh is slower and rate-limited next to herdr: ask about PRs less often than a tick
 # Spinner and timer lines change every second without any progress.
@@ -74,6 +75,8 @@ class Runner:
         self._failures: dict[str, str] = {}
         self._blocked_since: dict[str, float] = {}
         self._blocked_alerted: set[str] = set()
+        self._typing_since: float | None = None
+        self._typing_alerted = False
         self._missing_since: float | None = None
         self.ticks = 0
         self.done = False  # set once the Orchestrator has been gone a whole grace period
@@ -126,9 +129,18 @@ class Runner:
                 self._delivering = False
             new = self.state.events_since(self._delivered_upto)
             if new:
-                self.herdr.prompt(self.orchestrator, _batch(self.topic.name, new))
-                self._delivered_upto = new[-1].at
-                self._delivering = True
+                try:
+                    self.herdr.prompt(self.orchestrator, _batch(self.topic.name, new))
+                except AgentBusy:  # the person is typing: hold the Events (they stay batched), speak up after a while
+                    self._typing_since = self._typing_since if self._typing_since is not None else now
+                    if now - self._typing_since >= TYPING_ALERT_S and not self._typing_alerted:
+                        self._typing_alerted = True
+                        self.notify(f"Topic {self.topic.name}: Events are waiting",
+                                    "the Orchestrator's input box has had text in it for minutes")
+                else:
+                    self._typing_since, self._typing_alerted = None, False
+                    self._delivered_upto = new[-1].at
+                    self._delivering = True
 
         heartbeat = self.state.heartbeat_at()
         waiting = self.state.events_since(heartbeat if heartbeat is not None else float("-inf"))

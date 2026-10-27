@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from herdr_orch.herdr import AgentBlocked, CliHerdr
+from herdr_orch.herdr import AgentBlocked, AgentBusy, CliHerdr
 from herdr_orch.state import PLUGIN_ID
 
 
@@ -73,6 +73,18 @@ BLOCKED = '{"error":{"code":"agent_blocked","message":"agent issue-1 is blocked"
 
 
 class CliHerdrPromptBlockedTest(unittest.TestCase):
+    def setUp(self) -> None:
+        screen = mock.patch.object(CliHerdr, "_screen_of", return_value="❯\n")  # an empty input box
+        screen.start()
+        self.addCleanup(screen.stop)
+
+    def test_text_in_the_input_box_is_never_typed_over(self) -> None:
+        with mock.patch.object(CliHerdr, "_screen_of", return_value="❯ regarding waki session,\n"):
+            with mock.patch("herdr_orch.herdr.subprocess.run") as run:
+                with self.assertRaises(AgentBusy):
+                    CliHerdr("herdr").prompt("orch-personal", "hello")
+        run.assert_not_called()
+
     def test_herdr_refusing_a_blocked_agent_raises_agent_blocked(self) -> None:
         err = subprocess.CalledProcessError(1, ["herdr"], output=BLOCKED, stderr="")
         with mock.patch("herdr_orch.herdr.subprocess.run", side_effect=err):

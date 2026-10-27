@@ -1,6 +1,6 @@
 import unittest
 
-from herdr_orch.herdr import delivery
+from herdr_orch.herdr import delivery, typed_input
 
 SNIPPET = "You are the Orchestrator for"
 PASTED = """ ▐▛███▛█   Claude Code v2.1.310
@@ -29,6 +29,15 @@ class DeliveryTest(unittest.TestCase):
 
     def test_text_nowhere_on_screen_is_missing(self) -> None:
         self.assertEqual(delivery(MISSING, SNIPPET), "missing")
+
+
+class TypedInputTest(unittest.TestCase):
+    def test_text_after_the_last_prompt_marker_is_the_persons(self) -> None:
+        self.assertEqual(typed_input(ANSWERED.replace("❯\n", "❯ resolve the five\n")), "resolve the five")
+
+    def test_an_empty_box_or_the_greyed_suggestion_is_not_typing(self) -> None:
+        self.assertEqual(typed_input(ANSWERED), "")
+        self.assertEqual(typed_input(MISSING), "")
 
 
 if __name__ == "__main__":
