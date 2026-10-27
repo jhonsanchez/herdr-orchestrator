@@ -1,6 +1,6 @@
 import unittest
 
-from herdr_orch.attention import TopicStatus, build_view, current_items
+from herdr_orch.attention import TopicStatus, View, build_view, current_items
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch.state import RunnerStatus
 
@@ -26,7 +26,7 @@ class ScopeTest(unittest.TestCase):
     items = [item("1", "a", "w1:p1", 10, topic="waki"), item("2", "b", "w2:p1", 20, topic="personal")]
     topics = [TopicStatus("waki", True, 1000.0, None, 15, ALIVE), TopicStatus("personal", False, None, None, 15)]
 
-    def view(self, scope: str | None):
+    def view(self, scope: str | None) -> View:
         return build_view(self.items, self.agents, self.workspaces, {"w1:p1", "w2:p1"}, self.topics, 1000.0, scope=scope)
 
     def test_all_topics_by_default(self) -> None:
