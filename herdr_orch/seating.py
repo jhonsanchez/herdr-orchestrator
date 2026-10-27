@@ -206,6 +206,19 @@ def start(
     return _brief(topic, state, herdr, cmd, root_pane, started, say)
 
 
+def ensure_link(cli: str, home: str) -> str:
+    """The stable ~/.local/bin/herdr-orch that briefs name: herdr keeps a new install directory per update,
+    so a versioned path goes stale. Create or repoint the symlink at the running install; return its path."""
+    link = Path(home) / ".local" / "bin" / "herdr-orch"
+    if not (link.is_symlink() and Path(os.readlink(link)) == Path(cli)):
+        link.parent.mkdir(parents=True, exist_ok=True)
+        tmp = link.with_name(f".herdr-orch.{os.getpid()}")
+        tmp.unlink(missing_ok=True)
+        tmp.symlink_to(cli)
+        tmp.replace(link)
+    return str(link)
+
+
 def _orchestrator_cmd(cli: str, topic: Topic, state: TopicState) -> str:
     """The Orchestrator runs in an ordinary shell: hand it the roots this process resolved."""
     roots = f"HERDR_ORCH_CONFIG={shlex.quote(str(topic.config_root))} HERDR_ORCH_STATE={shlex.quote(str(state.root))}"

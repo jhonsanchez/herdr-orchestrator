@@ -29,7 +29,7 @@ from herdr_orch.notify import notifier_for, stop_hooks
 from herdr_orch.reconcile import reconcile
 from herdr_orch.runner import Runner
 from herdr_orch.github import CliGitHub
-from herdr_orch.seating import release, seat, start, validated
+from herdr_orch.seating import ensure_link, release, seat, start, validated
 from herdr_orch.state import TopicState, find_managed, state_root
 from herdr_orch.supervisor import Supervisor
 from herdr_orch.topics import Answers, Topic, parse_notify, config_root, init_topic, load_topic, load_topics, topic_for
@@ -232,7 +232,7 @@ def main(
             home = env.get("HOME") or str(Path.home())
             return 0 if is_deployed(args.sha, plugins_dir(env, home), state) else 1
         elif args.cmd == "start":
-            if not start(topic, state, herdr, CLI):
+            if not start(topic, state, herdr, ensure_link(CLI, env.get("HOME") or str(Path.home()))):
                 return 1
         elif args.cmd == "inbox":
             pane = next((p for p, n in state.managed().items() if n == args.agent), None) or next(
@@ -242,7 +242,8 @@ def main(
             state.escalate(args.agent, pane, args.kind, args.question, args.option, now(), to="orchestrator")
         elif args.cmd == "seat":
             seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"),
-                          existing=args.existing, now=now, cli=CLI)
+                          existing=args.existing, now=now,
+                          cli=ensure_link(CLI, env.get("HOME") or str(Path.home())))
             print(f"{seated.name} {seated.pane_id}")
         elif args.cmd == "release":
             release(state, herdr, CliGitHub(), args.branch)
