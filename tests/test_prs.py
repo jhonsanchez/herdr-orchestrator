@@ -59,8 +59,8 @@ class ChecksTest(unittest.TestCase):
 
     def test_gh_is_asked_through_the_rest_endpoints_never_graphql(self) -> None:
         self.assertEqual(pulls_args("issue-1"), [
-            "gh", "api", "-X", "GET", "repos/{owner}/{repo}/pulls",
-            "-f", "head={owner}:issue-1", "-f", "state=all", "-f", "per_page=10"])
+            "gh", "api", "-X", "GET", "repos/{owner}/{repo}/pulls?head={owner}:issue-1",
+            "-f", "state=all", "-f", "per_page=10"])
         self.assertEqual(checks_args("abc")[:5], ["gh", "api", "-X", "GET", "repos/{owner}/{repo}/commits/abc/check-runs"])
         self.assertNotIn("pr", pulls_args("issue-1")[:2])
 
