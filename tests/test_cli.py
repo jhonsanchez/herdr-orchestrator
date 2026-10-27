@@ -6,11 +6,11 @@ import subprocess
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from herdr_orch.cli import main, resolve_topic
-from herdr_orch.herdr import Workspace
+from herdr_orch.herdr import Agent, Workspace
 from herdr_orch.notify import notifier
 from herdr_orch.state import TopicState
 from herdr_orch.topics import load_topics
@@ -122,3 +122,63 @@ class LinkedLauncherTest(unittest.TestCase):
             link.symlink_to(Path(__file__).resolve().parent.parent / "bin" / "herdr-orch")
             r = subprocess.run([str(link), "--help"], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class AnswerCliTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.env = {"HERDR_ORCH_CONFIG": str(root / "cfg"), "HERDR_ORCH_STATE": str(root / "state"), "HOME": "/home/u"}
+        with redirect_stdout(io.StringIO()):
+            main(["init", "waki"], self.env)
+        self.state = TopicState(root / "state", "waki")
+        self.state.escalate("waki-1", "w1:p1", "decision", "Which color?", ["Red"], now=1, item_id="a1")
+        self.state.escalate("waki-1", "w1:p1", "decision", "Merge?", ["Yes"], now=2, to="orchestrator", item_id="o1")
+        self.herdr = FakeHerdr()
+        self.herdr.agent_list = [Agent("waki-1", "idle", "w1:p1", "w1"), Agent("orch-waki", "idle", "w2:p1", "w2")]
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def last(self, item_id: str) -> dict[str, object]:
+        return [i for i in self.state.inbox_lines() if i["id"] == item_id][-1]
+
+    def test_answer_prompts_the_agent_and_resolves_the_item(self) -> None:
+        self.assertEqual(main(["answer", "waki", "a1", "Red"], self.env, adapter=self.herdr), 0)
+        [(_, target, text)] = self.herdr.of("prompt")
+        self.assertEqual(target, "w1:p1")
+        self.assertIn("Red", str(text))
+        self.assertEqual((self.last("a1")["status"], self.last("a1")["answer"]), ("resolved", "Red"))
+
+    def test_answer_to_an_orchestrator_item_goes_to_the_orchestrator(self) -> None:
+        self.assertEqual(main(["answer", "waki", "o1", "Yes"], self.env, adapter=self.herdr), 0)
+        self.assertEqual([c[1] for c in self.herdr.of("prompt")], ["orch-waki"])
+        self.assertEqual(self.last("o1")["status"], "resolved")
+
+    def test_a_failed_delivery_keeps_the_item_open(self) -> None:
+        self.herdr.prompt_error = "never took the prompt"
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["answer", "waki", "a1", "Red"], self.env, adapter=self.herdr), 1)
+        self.assertEqual(self.last("a1")["status"], "open")
+
+    def test_an_answer_is_refused_when_another_agent_holds_the_pane(self) -> None:
+        self.herdr.agent_list = [Agent("waki-2", "idle", "w1:p1", "w1")]
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["answer", "waki", "a1", "Red"], self.env, adapter=self.herdr), 1)
+        self.assertEqual(self.herdr.of("prompt"), [])
+        self.assertEqual(self.last("a1")["status"], "open")
+
+    def test_dismiss_resolves_without_delivering(self) -> None:
+        self.assertEqual(main(["answer", "waki", "a1", "--dismiss"], self.env, adapter=self.herdr), 0)
+        self.assertEqual(self.herdr.of("prompt"), [])
+        self.assertEqual(self.last("a1")["status"], "dismissed")
+
+    def test_an_unknown_or_closed_item_is_an_error(self) -> None:
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["answer", "waki", "nope", "x"], self.env, adapter=self.herdr), 1)
+            main(["answer", "waki", "a1", "--dismiss"], self.env, adapter=self.herdr)
+            self.assertEqual(main(["answer", "waki", "a1", "x"], self.env, adapter=self.herdr), 1)
+
+    def test_an_answer_needs_text_unless_dismissing(self) -> None:
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["answer", "waki", "a1"], self.env, adapter=self.herdr), 1)

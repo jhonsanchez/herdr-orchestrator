@@ -45,6 +45,27 @@ class HooksTest(unittest.TestCase):
         [event] = self.state.events_since(float("-inf"))
         self.assertEqual((event.source, event.text), ("stop", "waki-12 finished: Opened PR #5."))
 
+    def test_a_prompt_closes_the_agents_own_open_items_but_not_the_orchestrators(self) -> None:
+        self.state.take("w1:p2", "waki-12")
+        self.state.escalate("waki-12", "w1:p2", "decision", "Which?", [], 1, item_id="mine")
+        self.state.escalate("waki-12", "w1:p2", "decision", "Merge?", [], 2, to="orchestrator", item_id="theirs")
+        self.state.escalate("waki-9", "w1:p9", "decision", "Other?", [], 3, item_id="other")
+        self.assertIsNone(handle({"hook_event_name": "UserPromptSubmit", "prompt": "Use red"}, self.env, now=9.0))
+        status = {i["id"]: i["status"] for i in self.items()}
+        self.assertEqual(status, {"mine": "resolved", "theirs": "open", "other": "open"})
+
+    def test_a_prompt_does_not_overwrite_an_answer_already_recorded(self) -> None:
+        self.state.take("w1:p2", "waki-12")
+        self.state.escalate("waki-12", "w1:p2", "decision", "Which?", [], 1, item_id="mine")
+        self.state.resolve("mine", "resolved", "Red")
+        handle({"hook_event_name": "UserPromptSubmit"}, self.env, now=9.0)
+        self.assertEqual(self.items()[-1]["answer"], "Red")
+
+    def test_a_prompt_to_an_unregistered_pane_is_untouched(self) -> None:
+        self.state.escalate("waki-12", "w1:p2", "decision", "Which?", [], 1, item_id="mine")
+        self.assertIsNone(handle({"hook_event_name": "UserPromptSubmit"}, self.env, now=9.0))
+        self.assertEqual(self.items()[-1]["status"], "open")
+
     def test_an_unregistered_pane_is_untouched_by_every_hook(self) -> None:
         for payload in (ASK, PERMISSION, stop("Shall I continue?")):
             self.assertIsNone(handle(payload, self.env, now=1.0))
