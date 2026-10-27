@@ -39,6 +39,12 @@ class HooksTest(unittest.TestCase):
             return []
         return [json.loads(line) for line in self.state.inbox.read_text().splitlines()]
 
+    def test_a_managed_agents_stop_is_an_event_for_the_orchestrator(self) -> None:
+        self.state.take("w1:p2", "waki-12")
+        self.assertIsNone(handle(stop("Opened PR #5."), self.env, now=5.0))
+        [event] = self.state.events_since(float("-inf"))
+        self.assertEqual((event.source, event.text), ("stop", "waki-12 finished: Opened PR #5."))
+
     def test_an_unregistered_pane_is_untouched_by_every_hook(self) -> None:
         for payload in (ASK, PERMISSION, stop("Shall I continue?")):
             self.assertIsNone(handle(payload, self.env, now=1.0))

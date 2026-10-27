@@ -75,6 +75,9 @@ def handle(payload: Mapping[str, Any], env: Mapping[str, str], now: float) -> di
         last = _last_paragraph(str(payload.get("last_assistant_message") or ""))
         if last.endswith("?"):
             state.escalate(agent, pane, "question", last, [], now, guess=True)
+        # The runner hands this Event to the Orchestrator as a prompt: it hears of the finish
+        # from the agent itself, not only from its pane going idle.
+        state.append_event("stop", f"{agent} finished: {last[:200]}" if last else f"{agent} finished", now)
         return None
     return None
 
