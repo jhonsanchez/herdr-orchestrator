@@ -131,7 +131,8 @@ class Ledger:
                 owned.add((repo, pr.number))
             if repo in by_repo or b.get("pr_state") != "open":
                 entry = classify_branch(b, pr, agents.get(str(b.get("agent"))), self.deploy_gate)
-                self.state.set_ledger(str(b["branch"]), entry.as_dict(), now)
+                self.state.set_ledger(str(b["branch"]),
+                                      {**entry.as_dict(), "mergeable_state": pr.mergeable_state if pr else None}, now)
         for repo, prs in by_repo.items():
             for p in prs:
                 if (repo, p.number) in owned:
@@ -163,3 +164,32 @@ def ledger_lines(state: TopicState, now: float) -> list[str]:
         out.append(f"untracked PR #{u['number']} ({u['head_ref']}): {what} ({u['owner']}) "
                    f"{_age(float(u['since']), now)}")  # type: ignore[arg-type]
     return out
+
+
+def status_rows(state: TopicState, now: float) -> list[dict[str, object]]:
+    """Every tracked branch and untracked open PR as the last sweep left it, one dict per row."""
+    rows: list[dict[str, object]] = []
+    for b in state.tracked_branches():
+        led = b.get("ledger")
+        if not isinstance(led, dict):
+            continue  # not swept yet
+        rows.append({"branch": b["branch"], "pr": b.get("pr"), "tracked": True, "state": led["state"],
+                     "waiting_on": led["waiting_on"], "owner": led["owner"], "age_s": int(max(0, now - float(led["since"]))),
+                     "checks": b.get("checks"), "mergeable_state": led.get("mergeable_state")})
+    for u in state.untracked_prs():
+        rows.append({"branch": u["head_ref"], "pr": u["number"], "tracked": False, "state": u["state"],
+                     "waiting_on": u["waiting_on"], "owner": u["owner"], "age_s": int(max(0, now - float(u["since"]))),  # type: ignore[arg-type]
+                     "checks": u["checks"], "mergeable_state": u["mergeable_state"]})
+    return rows
+
+
+def status_table(rows: list[dict[str, object]]) -> str:
+    if not rows:
+        return "no tracked branches or open PRs (the Watch runner's sweep has not recorded any yet)"
+    head = ("BRANCH", "PR", "STATE", "OWNER", "IN STATE", "CHECKS", "MERGEABLE")
+    body = [(f"{r['branch']}{'' if r['tracked'] else ' (untracked PR)'}", f"#{r['pr']}" if r["pr"] else "-",
+             f"waiting on {r['waiting_on']}" if r["state"] == "waiting_on" else "working", str(r["owner"]),
+             _age(0, float(r["age_s"])), str(r["checks"] or "-"), str(r["mergeable_state"] or "-"))  # type: ignore[arg-type]
+            for r in rows]
+    widths = [max(len(x[i]) for x in [head, *body]) for i in range(len(head))]
+    return "\n".join("  ".join(c.ljust(w) for c, w in zip(line, widths)).rstrip() for line in [head, *body])

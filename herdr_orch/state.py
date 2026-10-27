@@ -143,7 +143,12 @@ class TopicState:
         if record is None:
             return False
         old = record.get("ledger")
-        if isinstance(old, dict) and {k: v for k, v in old.items() if k != "since"} == entry:
+        # mergeable_state is shown by `status` but is not a transition: it never restarts `since`
+        def core(d: dict[str, object]) -> dict[str, object]:
+            return {k: v for k, v in d.items() if k not in ("since", "mergeable_state")}
+        if isinstance(old, dict) and core(old) == core(entry):
+            if old.get("mergeable_state") != entry.get("mergeable_state"):
+                self._write_branch({**record, "ledger": {**old, "mergeable_state": entry.get("mergeable_state")}})
             return False
         self._write_branch({**record, "ledger": {**entry, "since": now}})
         return True
