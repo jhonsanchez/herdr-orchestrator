@@ -11,7 +11,7 @@ class CliHerdrAttentionOpenTest(unittest.TestCase):
         done = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with mock.patch("herdr_orch.herdr.subprocess.run", return_value=done) as run:
             CliHerdr("herdr").attention_open("w1X", "w1X:p1")
-        argv = run.call_args.args[0]
+        argv = run.call_args_list[0].args[0]
         # herdr 0.9.5 rejects --workspace beside --target-pane for a split (invalid_params).
         self.assertNotIn("--workspace", argv)
         self.assertEqual(argv, [
@@ -19,11 +19,28 @@ class CliHerdrAttentionOpenTest(unittest.TestCase):
             "--placement", "split", "--direction", "right", "--target-pane", "w1X:p1", "--no-focus",
         ])
 
+    def test_shrinks_the_new_pane_to_a_narrow_column(self) -> None:
+        opened = '{"result":{"plugin_pane":{"pane":{"pane_id":"w1X:p3"}}}}'
+        done = subprocess.CompletedProcess([], 0, stdout=opened, stderr="")
+        with mock.patch("herdr_orch.herdr.subprocess.run", return_value=done) as run:
+            CliHerdr("herdr").attention_open("w1X", "w1X:p1")
+        self.assertEqual(run.call_args.args[0], [
+            "herdr", "pane", "resize", "--pane", "w1X:p3", "--direction", "right", "--amount", "0.150",
+        ])
+
+    def test_the_width_is_overridable_from_the_environment(self) -> None:
+        opened = '{"result":{"plugin_pane":{"pane":{"pane_id":"w1X:p3"}}}}'
+        done = subprocess.CompletedProcess([], 0, stdout=opened, stderr="")
+        with mock.patch("herdr_orch.herdr.subprocess.run", return_value=done) as run, \
+                mock.patch.dict("os.environ", {"HERDR_ORCH_ATTENTION_WIDTH": "0.25"}):
+            CliHerdr("herdr").attention_open("w1X", "w1X:p1")
+        self.assertEqual(run.call_args.args[0][-1], "0.250")
+
     def test_a_topic_scopes_the_pane_through_its_env(self) -> None:
         done = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with mock.patch("herdr_orch.herdr.subprocess.run", return_value=done) as run:
             CliHerdr("herdr").attention_open("w1X", "w1X:p1", "waki")
-        self.assertEqual(run.call_args.args[0][-2:], ["--env", "HERDR_ORCH_ATTENTION_TOPIC=waki"])
+        self.assertEqual(run.call_args_list[0].args[0][-2:], ["--env", "HERDR_ORCH_ATTENTION_TOPIC=waki"])
 
 
 GONE = '{"error":{"code":"workspace_not_found","message":"workspace w23 not found"}}'

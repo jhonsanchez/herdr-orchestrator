@@ -13,6 +13,7 @@ from herdr_orch.state import PLUGIN_ID
 
 
 ATTENTION_LABEL = "Attention"  # the title herdr gives the pane in herdr-plugin.toml
+ATTENTION_WIDTH = 0.35  # the pane's share of the workspace width; HERDR_ORCH_ATTENTION_WIDTH overrides
 
 
 
@@ -221,13 +222,21 @@ class CliHerdr:
         return any(p.get("label") == ATTENTION_LABEL for p in data.get("result", {}).get("panes", []))
 
     def attention_open(self, workspace_id: str, target_pane: str, topic: str | None = None) -> None:
-        """The Attention pane in a right-hand column of the workspace, without taking focus.
+        """The Attention pane in a narrow right-hand column of the workspace, without taking focus.
         With `topic` it opens scoped to that Topic's items."""
         # No --workspace: herdr rejects it beside --target-pane, whose id already names the workspace.
-        self._json("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", "attention",
-                   "--placement", "split", "--direction", "right",
-                   "--target-pane", target_pane, "--no-focus",
-                   *(["--env", f"HERDR_ORCH_ATTENTION_TOPIC={topic}"] if topic else []))
+        opened = self._json("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", "attention",
+                            "--placement", "split", "--direction", "right",
+                            "--target-pane", target_pane, "--no-focus",
+                            *(["--env", f"HERDR_ORCH_ATTENTION_TOPIC={topic}"] if topic else []))
+        # The open has no size option and splits 50/50; shrink the new right-hand pane by the excess.
+        pane = opened.get("result", {}).get("plugin_pane", {}).get("pane", {}).get("pane_id")
+        try:
+            width = float(os.environ.get("HERDR_ORCH_ATTENTION_WIDTH", ATTENTION_WIDTH))
+        except ValueError:
+            width = ATTENTION_WIDTH
+        if pane and 0 < width < 0.5:
+            self._json("pane", "resize", "--pane", pane, "--direction", "right", "--amount", f"{0.5 - width:.3f}")
 
     def plugin_config_dir(self) -> str | None:
         """Where herdr keeps this plugin's config; None when herdr can't say."""
