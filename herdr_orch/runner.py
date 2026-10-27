@@ -177,17 +177,20 @@ class Runner:
             return
         self._pr_polled_at = now
         for branch in self.state.tracked_branches():
-            backfill = branch.get("pr_state") == "merged" and not branch.get("merge_sha")
-            if (branch.get("pr_state") in ("merged", "closed") and not backfill) or not branch.get("repo_root"):
+            if not branch.get("repo_root"):
                 continue
+            backfill = branch.get("pr_state") == "merged" and not branch.get("merge_sha")
+            ended = branch.get("pr_state") in ("merged", "closed")
             try:
                 pr = self.github.pr_for_branch(str(branch["repo_root"]), str(branch["branch"]))
             except RuntimeError:
                 continue  # GitHub is unreachable or rate-limited: the PR's state is unknown, not changed
-            if backfill:
-                if pr is not None and pr.state == "merged" and pr.merge_sha:
+            if backfill and pr is not None and pr.number == branch.get("pr"):
+                if pr.state == "merged" and pr.merge_sha:
                     self.state.set_pr(str(branch["branch"]), pr.number, pr.state, pr.checks, now, pr.merge_sha)
                 continue
+            if ended and (pr is None or pr.number == branch.get("pr")):
+                continue  # the same PR, already reported; only a newer PR on the branch starts a new cycle
             text = pr_change(branch, pr)
             if pr is not None and text is not None:
                 self.state.append_event("pr", text, now)
@@ -253,7 +256,7 @@ class Runner:
             sha = str(branch["merge_sha"])[:8]
             self.state.append_event("deploy", f"{name} deployed at {sha}; its agent is prompted to validate", now)
             if str(branch.get("agent")) in agents:
-                text = (f"Your merge ({sha}) is deployed. Validate it now: check that the installed plugin is at "
+                text = (f"Your PR #{branch.get('pr')}'s merge ({sha}) is deployed. Validate it now: check that the installed plugin is at "
                         f"{sha}. {self.topic.validate} Run `herdr-orch validated {self.topic.name} --branch {name} "
                         "--evidence '<what you ran and its last output>'` only after you have checked: an empty "
                         "evidence is refused.")

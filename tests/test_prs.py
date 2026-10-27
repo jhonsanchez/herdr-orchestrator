@@ -143,12 +143,40 @@ class RunnerPrTest(unittest.TestCase):
             "PR #20 (issue-1) merged; its workspace can be cleaned up",
         ])
 
-    def test_an_unchanged_pr_says_nothing_and_a_merged_one_is_not_asked_about_again(self) -> None:
+    def test_an_unchanged_pr_says_nothing_and_a_merged_one_is_not_announced_again(self) -> None:
         self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc123")
         self.runner.tick(1)
         self.runner.tick(1 + PR_POLL_SECONDS)
         self.assertEqual(len(self.events()), 1)
-        self.assertEqual(self.github.asked, ["issue-1"])
+        self.assertEqual(len(self.herdr.of("prompt")), 1)
+
+    def test_a_second_pr_on_the_branch_restarts_the_cycle_and_is_announced_by_number(self) -> None:
+        self.github.prs["issue-1"] = PullRequest(48, "merged", "passing", merge_sha="aaa11111")
+        self.runner.tick(1)
+        self.state.mark_deployed("issue-1")
+        self.state.mark_validated("issue-1", 2)
+        self.github.prs["issue-1"] = PullRequest(56, "open", "passing")
+        self.runner.tick(1 + PR_POLL_SECONDS)
+        record = self.state.branch_record("issue-1")
+        assert record is not None
+        self.assertEqual((record["pr"], record["pr_state"]), (56, "open"))
+        self.assertFalse(record["merge_sha"])
+        for gone in ("validated_at", "deployed"):
+            self.assertNotIn(gone, record)
+        self.assertTrue(self.events()[-1].startswith("PR #56 (issue-1) open"))
+        texts = [str(c[2]) for c in self.herdr.of("prompt")]
+        self.assertTrue(any("PR #48" in t and "merged" in t for t in texts))
+        self.assertTrue(any("PR #56" in t and "green" in t for t in texts))
+
+    def test_a_validation_of_the_first_pr_does_not_release_the_branch_for_the_second(self) -> None:
+        self.github.prs["issue-1"] = PullRequest(48, "merged", "passing", merge_sha="aaa11111")
+        self.runner.tick(1)
+        self.github.prs["issue-1"] = PullRequest(56, "open", "pending")
+        self.state.mark_validated("issue-1", 2)  # the agent validated #48 before #56 was seen
+        self.runner.tick(1 + PR_POLL_SECONDS)
+        record = self.state.branch_record("issue-1")
+        assert record is not None
+        self.assertNotIn("validated_at", record)
 
     def test_github_is_asked_no_more_often_than_the_poll_interval(self) -> None:
         self.runner.tick(1)
