@@ -117,11 +117,14 @@ class RunnerPrTest(unittest.TestCase):
         self.runner.tick(1)
         self.github.prs["issue-1"] = PullRequest(20, "open", "failing")
         self.runner.tick(1 + PR_POLL_SECONDS)
-        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing")
+        self.github.prs["issue-1"] = PullRequest(20, "open", "passing")
         self.runner.tick(1 + 2 * PR_POLL_SECONDS)
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing")
+        self.runner.tick(1 + 3 * PR_POLL_SECONDS)
         self.assertEqual(self.events(), [
             "PR #20 (issue-1) open, checks pending",
-            "PR #20 (issue-1) checks failing",
+            "PR #20 (issue-1) checks failing; send the failure back to its agent",
+            "PR #20 (issue-1) checks passing; green: merge it if the playbook lets you, else put it in the Inbox",
             "PR #20 (issue-1) merged; its workspace can be cleaned up",
         ])
 
