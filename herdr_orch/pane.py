@@ -16,6 +16,7 @@ from herdr_orch.herdr import Herdr
 from herdr_orch.topics import Topic
 
 REFRESH_MS = 2000
+SCOPE_ENV = "HERDR_ORCH_ATTENTION_TOPIC"  # set when the pane is opened beside a Topic's Orchestrator
 ICONS = {"decision": "?", "question": "?", "permission": "!", "blocked": "◐", "done": "✓", "followup": "↻"}
 
 
@@ -27,8 +28,11 @@ def _age(row: Row, now: float) -> str:
 
 
 class App:
-    def __init__(self, states: Path, topics: list[Topic], herdr: Herdr, now: Callable[[], float] = time.time) -> None:
+    def __init__(self, states: Path, topics: list[Topic], herdr: Herdr, now: Callable[[], float] = time.time,
+                 scope: str | None = None) -> None:
         self.states, self.topics, self.herdr, self.now = states, topics, herdr, now
+        self.home_scope = scope  # None: the standalone, all-Topics pane
+        self.scope = scope
         self.view = View([], [])
         self.selected = 0
         self.choosing = False
@@ -38,7 +42,7 @@ class App:
 
     def refresh(self) -> None:
         try:
-            self.view = load(self.states, self.topics, self.herdr, self.now(), self.hidden)
+            self.view = load(self.states, self.topics, self.herdr, self.now(), self.hidden, self.scope)
         except Exception as e:  # herdr briefly unreachable: keep the last view
             self.message = f"refresh failed: {e}"
         self.selected = min(self.selected, self.last())
@@ -62,6 +66,8 @@ class App:
                 scr.addnstr(y, 0, text, width - 1, attr)
                 y += 1
 
+        header = f"Topic {self.scope}" if self.scope else "All Topics"
+        put(header + ("  ([a] toggle)" if self.home_scope else ""), curses.A_BOLD)
         for banner in self.view.banners:
             put(f"⚠ {banner}", curses.A_BOLD | curses.color_pair(1))
         for line in self.view.status:
@@ -151,6 +157,10 @@ class App:
         elif key in (curses.KEY_DOWN, ord("j")):
             self.selected = min(self.selected + 1, self.last())
         elif key == ord("r"):
+            self.refresh()
+        elif key == ord("a") and self.home_scope:
+            self.scope = None if self.scope else self.home_scope
+            self.selected = 0
             self.refresh()
         elif row is None:
             return True

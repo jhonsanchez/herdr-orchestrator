@@ -19,6 +19,12 @@ class CliHerdrAttentionOpenTest(unittest.TestCase):
             "--placement", "split", "--direction", "right", "--target-pane", "w1X:p1", "--no-focus",
         ])
 
+    def test_a_topic_scopes_the_pane_through_its_env(self) -> None:
+        done = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch("herdr_orch.herdr.subprocess.run", return_value=done) as run:
+            CliHerdr("herdr").attention_open("w1X", "w1X:p1", "waki")
+        self.assertEqual(run.call_args.args[0][-2:], ["--env", "HERDR_ORCH_ATTENTION_TOPIC=waki"])
+
 
 GONE = '{"error":{"code":"workspace_not_found","message":"workspace w23 not found"}}'
 

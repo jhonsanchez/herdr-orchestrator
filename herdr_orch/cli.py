@@ -182,10 +182,11 @@ def main(
     if args.cmd == "attention":
         import curses
 
-        from herdr_orch.pane import App
+        from herdr_orch.pane import SCOPE_ENV, App
 
         os.environ.setdefault("ESCDELAY", "25")  # curses waits a full second after Esc otherwise
-        curses.wrapper(App(states, topics, herdr).run)
+        scope = env.get(SCOPE_ENV) or None
+        curses.wrapper(App(states, topics, herdr, scope=scope).run)
         return 0
     if args.cmd in ("take", "give-back"):
         try:

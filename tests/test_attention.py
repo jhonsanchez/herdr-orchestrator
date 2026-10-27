@@ -19,6 +19,34 @@ class CurrentItemsTest(unittest.TestCase):
         self.assertEqual([i["id"] for i in current_items(lines)], ["2"])
 
 
+class ScopeTest(unittest.TestCase):
+    agents = [Agent("a", "working", "w1:p1", "w1"), Agent("b", "working", "w2:p1", "w2"),
+              Agent("loose", "blocked", "w3:p1", "w3")]
+    workspaces = [Workspace("w1", "1-x", None), Workspace("w2", "2-y", None), Workspace("w3", "scratch", None)]
+    items = [item("1", "a", "w1:p1", 10, topic="waki"), item("2", "b", "w2:p1", 20, topic="personal")]
+    topics = [TopicStatus("waki", True, 1000.0, None, 15, ALIVE), TopicStatus("personal", False, None, None, 15)]
+
+    def view(self, scope: str | None):
+        return build_view(self.items, self.agents, self.workspaces, {"w1:p1", "w2:p1"}, self.topics, 1000.0, scope=scope)
+
+    def test_all_topics_by_default(self) -> None:
+        view = self.view(None)
+        self.assertEqual([r.item_id for r in view.rows()], ["1", "2", None])
+        self.assertIsNone(view.scope)
+
+    def test_a_scope_shows_only_that_topics_rows_and_liveness(self) -> None:
+        view = self.view("waki")
+        self.assertEqual([r.item_id for r in view.rows()], ["1"])
+        self.assertEqual(view.scope, "waki")
+        self.assertEqual(len(view.status), 1)
+        self.assertIn("Topic waki", view.status[0])
+
+    def test_another_topics_unattended_banner_stays_in_the_scoped_view(self) -> None:
+        view = self.view("waki")
+        self.assertEqual(len(view.banners), 1)
+        self.assertIn("Topic personal is Unattended", view.banners[0])
+
+
 class BuildViewTest(unittest.TestCase):
     agents = [Agent("waki-1", "working", "w1:p1", "w1"), Agent("waki-2", "blocked", "w2:p1", "w2"),
               Agent("mine", "blocked", "w3:p1", "w3"), Agent("idle-one", "idle", "w3:p2", "w3")]

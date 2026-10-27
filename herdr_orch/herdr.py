@@ -49,7 +49,7 @@ class Herdr(Protocol):
     def open_setup(self, repo_root: str) -> None: ...
     def notification(self, title: str, body: str) -> None: ...
     def has_attention(self, workspace_id: str) -> bool: ...
-    def attention_open(self, workspace_id: str, target_pane: str) -> None: ...
+    def attention_open(self, workspace_id: str, target_pane: str, topic: str | None = None) -> None: ...
 
 
 Delivery = Literal["answered", "pasted", "missing"]
@@ -207,12 +207,14 @@ class CliHerdr:
         data = self._json("pane", "list", "--workspace", workspace_id)
         return any(p.get("label") == ATTENTION_LABEL for p in data.get("result", {}).get("panes", []))
 
-    def attention_open(self, workspace_id: str, target_pane: str) -> None:
-        """The Attention pane in a right-hand column of the workspace, without taking focus."""
+    def attention_open(self, workspace_id: str, target_pane: str, topic: str | None = None) -> None:
+        """The Attention pane in a right-hand column of the workspace, without taking focus.
+        With `topic` it opens scoped to that Topic's items."""
         # No --workspace: herdr rejects it beside --target-pane, whose id already names the workspace.
         self._json("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", "attention",
                    "--placement", "split", "--direction", "right",
-                   "--target-pane", target_pane, "--no-focus")
+                   "--target-pane", target_pane, "--no-focus",
+                   *(["--env", f"HERDR_ORCH_ATTENTION_TOPIC={topic}"] if topic else []))
 
     def plugin_config_dir(self) -> str | None:
         """Where herdr keeps this plugin's config; None when herdr can't say."""
