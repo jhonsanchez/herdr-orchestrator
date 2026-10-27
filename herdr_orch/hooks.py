@@ -15,6 +15,7 @@ import sys
 import time
 from typing import Any, Mapping
 
+from herdr_orch.attention import current_items
 from herdr_orch.state import TopicState, find_managed, state_root
 
 # Worded as validated by the #4 spike.
@@ -63,6 +64,14 @@ def handle(payload: Mapping[str, Any], env: Mapping[str, str], now: float) -> di
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": DENY_REASON,
         }}
+
+    if event == "UserPromptSubmit":
+        # The answer is arriving: what this agent asked is no longer waiting. Orchestrator-raised
+        # items (to: orchestrator) are about the agent, not from it, and stay.
+        for item in current_items(state.inbox_lines()):
+            if item.get("pane") == pane and item.get("agent") == agent and item.get("to", "agent") == "agent":
+                state.resolve(str(item["id"]), "resolved", "(answered by a prompt)")
+        return None
 
     if event == "PermissionRequest":
         tool = str(payload.get("tool_name", "a tool"))

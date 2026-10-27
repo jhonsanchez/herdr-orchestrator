@@ -22,6 +22,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from herdr_orch.attention import answer, dismiss, open_item
 from herdr_orch.deploy import is_deployed, newer_install, plugins_dir
 from herdr_orch.handover import give_back, take
 from herdr_orch.herdr import CliHerdr, Herdr, find_key
@@ -144,6 +145,11 @@ def main(
     add_cmd.add_argument("--question", required=True)
     add_cmd.add_argument("--option", action="append", default=[], help="a choice, the recommended one first (repeatable)")
     add_cmd.add_argument("--kind", choices=("decision", "question"), default="decision")
+    answer_cmd = sub.add_parser("answer", help="answer an Inbox item: deliver the text to whoever it is for, then close it")
+    answer_cmd.add_argument("topic")
+    answer_cmd.add_argument("item_id")
+    answer_cmd.add_argument("text", nargs="?")
+    answer_cmd.add_argument("--dismiss", action="store_true", help="close the item without delivering anything (made moot by events)")
     deployed_cmd = sub.add_parser("deployed", help="exit 0 when a merge is in the installed plugin and the Watch runner runs on it")
     deployed_cmd.add_argument("topic", nargs="?", default=os.environ.get("HERDR_ORCH_TOPIC"))
     deployed_cmd.add_argument("--sha", default=os.environ.get("HERDR_ORCH_MERGE_SHA", ""))
@@ -249,6 +255,14 @@ def main(
             if pane is None:
                 raise ValueError(f"no agent named {args.agent}")
             state.escalate(args.agent, pane, args.kind, args.question, args.option, now(), to="orchestrator")
+        elif args.cmd == "answer":
+            row = open_item(state, args.item_id)
+            if args.dismiss:
+                dismiss(states, row)
+            elif not args.text:
+                raise ValueError("give the answer text, or --dismiss to close the item without one")
+            else:
+                print(f"answered {args.item_id}: sent to {answer(states, row, args.text, herdr, topic.orchestrator)}")
         elif args.cmd == "seat":
             seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"),
                           existing=args.existing, now=now, name=args.name,

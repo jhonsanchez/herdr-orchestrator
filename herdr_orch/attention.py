@@ -93,6 +93,14 @@ class View:
         return [r for g in self.groups for r in g.rows]
 
 
+def item_row(i: dict[str, Any]) -> Row:
+    return Row(
+        agent=str(i["agent"]), pane=str(i["pane"]), kind=str(i["kind"]), text=str(i["question"]),
+        options=[str(o) for o in i.get("options", [])], created_at=float(i["created_at"]),
+        item_id=str(i["id"]), topic=str(i["topic"]), guess=bool(i.get("guess")), to=str(i.get("to", "agent")),
+    )
+
+
 def _banner(t: TopicStatus, now: float) -> str | None:
     if not is_unattended(now, t.heartbeat_at, t.pending_since, t.orchestrator_present, t.window_min):
         return None
@@ -145,11 +153,7 @@ def build_view(
         ws = workspace_of.get(pane)
         return label_of.get(ws, ws) if ws else GONE
 
-    rows = [Row(
-        agent=str(i["agent"]), pane=str(i["pane"]), kind=str(i["kind"]), text=str(i["question"]),
-        options=[str(o) for o in i.get("options", [])], created_at=float(i["created_at"]),
-        item_id=str(i["id"]), topic=str(i["topic"]), guess=bool(i.get("guess")), to=str(i.get("to", "agent")),
-    ) for i in items]
+    rows = [item_row(i) for i in items]
     for f in followups:
         text = f.text or (f"{f.reason}: needs a follow-up (re-seat {f.agent} or tell the user)" if f.pr else
                           f"{f.agent} {f.reason}: needs a follow-up (PR, report or Inbox item)")
@@ -246,6 +250,14 @@ def answer(states: Path, row: Row, text: str, herdr: Herdr, orchestrator: str | 
         recipient = row.agent
     TopicState(states, row.topic).resolve(row.item_id, "resolved", text)
     return recipient
+
+
+def open_item(state: TopicState, item_id: str) -> Row:
+    """The open Inbox item with this id, for the commands that name one."""
+    item = next((i for i in current_items(state.inbox_lines()) if i["id"] == item_id), None)
+    if item is None:
+        raise ValueError(f"no open Inbox item {item_id} in Topic {state.topic}")
+    return item_row(item)
 
 
 def dismiss(states: Path, row: Row) -> None:
