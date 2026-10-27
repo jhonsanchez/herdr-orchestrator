@@ -154,17 +154,23 @@ class Runner:
         self.state.record_runner(os.getpid(), now, self.ticks)
 
     def _follow_prs(self, now: float) -> None:
-        """Report each tracked branch's PR changing, until the PR is merged or closed."""
+        """Report each tracked branch's PR changing, until the PR is merged or closed. A merged branch
+        recorded without its merge commit (merged before it was kept) is asked again until it has one."""
         if self.github is None or now - self._pr_polled_at < PR_POLL_SECONDS:
             return
         self._pr_polled_at = now
         for branch in self.state.tracked_branches():
-            if branch.get("pr_state") in ("merged", "closed") or not branch.get("repo_root"):
+            backfill = branch.get("pr_state") == "merged" and not branch.get("merge_sha")
+            if (branch.get("pr_state") in ("merged", "closed") and not backfill) or not branch.get("repo_root"):
                 continue
             try:
                 pr = self.github.pr_for_branch(str(branch["repo_root"]), str(branch["branch"]))
             except RuntimeError:
                 continue  # GitHub is unreachable or rate-limited: the PR's state is unknown, not changed
+            if backfill:
+                if pr is not None and pr.state == "merged" and pr.merge_sha:
+                    self.state.set_pr(str(branch["branch"]), pr.number, pr.state, pr.checks, now, pr.merge_sha)
+                continue
             text = pr_change(branch, pr)
             if pr is not None and text is not None:
                 self.state.append_event("pr", text, now)
