@@ -20,6 +20,17 @@ class AgentNameTest(unittest.TestCase):
         self.assertEqual(agent_name("123-fix"), "a-123-fix")
         self.assertEqual(len(agent_name("x" * 50)), 32)
 
+    def test_long_branches_sharing_a_prefix_get_distinct_names(self) -> None:
+        a = agent_name("dependabot/npm_and_yarn/frontend/vite-5.4.1")
+        b = agent_name("dependabot/npm_and_yarn/frontend/vue-3.5.0")
+        c = agent_name("dependabot/npm_and_yarn/frontend/vite-5.4.1")
+        self.assertNotEqual(a, b)
+        self.assertEqual(a, c)
+        self.assertTrue(all(len(n) <= 32 and n.startswith("dependabot-npm_and_yarn") for n in (a, b)))
+
+    def test_a_name_a_live_agent_has_gets_a_suffix(self) -> None:
+        self.assertEqual(agent_name("feat-a", {"feat-a"})[:7], "feat-a-")
+
 
 MCP_SCREEN = """ 2 new MCP servers found in this project
   Select any you wish to enable.
@@ -117,6 +128,43 @@ class SeatingTest(unittest.TestCase):
             seat(self.topic, self.state, self.herdr, workspace_id=str(ws), branch="FALCON-13", home="/home/u", cli="/opt/herdr-orch")
         self.assertEqual(len(self.herdr.of("worktree_create")), 1)
         self.assertEqual(self.state.managed(), {r.pane_id: "falcon-12"})
+
+    def test_a_failed_seat_removes_what_it_made_and_is_an_event(self) -> None:
+        self.herdr.prompt_error = "falcon-12 never took the prompt"
+        said: list[str] = []
+        with self.assertRaisesRegex(RuntimeError, "never took the prompt"):
+            seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u",
+                 say=said.append, cli="/opt/herdr-orch")
+        self.assertEqual(self.herdr.of("worktree_remove"), [("worktree_remove", "wt1")])
+        self.assertEqual([w.workspace_id for w in self.herdr.workspace_list], ["w3"])
+        self.assertEqual(self.state.managed(), {})
+        self.assertIsNone(self.state.branch_record("FALCON-12"))
+        [event] = [e for e in self.state.events.read_text().splitlines() if "\tseat_failed\t" in e]
+        self.assertIn("seat of FALCON-12 failed", event)
+        self.assertIn("removed workspace/worktree wt1", event)
+        self.assertIn("removed workspace/worktree wt1", said[-1])
+
+    def test_a_seat_waiting_at_a_dialog_is_kept(self) -> None:
+        self.herdr.becomes_ready = False
+        self.herdr.ready_after_start = False
+        with mock.patch.object(seating, "DIALOG_TIMEOUT_SECONDS", 0.01), self.assertRaises(TimeoutError):
+            seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u",
+                 say=lambda m: None, cli="/opt/herdr-orch")
+        self.assertEqual(self.herdr.of("worktree_remove"), [])
+        self.assertIsNotNone(self.state.branch_record("FALCON-12"))
+
+    def test_seat_names_long_colliding_branches_apart_and_name_overrides(self) -> None:
+        first = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="dependabot/npm_and_yarn/frontend/a",
+                     home="/home/u", cli="/x")
+        self.herdr.agent_list.append(Agent(first.name, "idle", first.pane_id, "wt1"))
+        second = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="dependabot/npm_and_yarn/frontend/b",
+                      home="/home/u", cli="/x")
+        self.assertNotEqual(first.name, second.name)
+        named = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="issue-5", home="/home/u", cli="/x", name="mine")
+        self.assertEqual(named.name, "mine")
+        with self.assertRaisesRegex(ValueError, "not valid"):
+            seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="issue-6", home="/home/u", cli="/x", name="Bad Name")
+        self.assertEqual(len(self.herdr.of("worktree_create")), 3)
 
     def write_playbook(self, text: str = "# Playbook\n\n## Yours alone\n\n- Production.\n") -> None:
         self.topic.dir.mkdir(parents=True, exist_ok=True)

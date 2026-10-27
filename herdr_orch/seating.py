@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shlex
@@ -10,7 +11,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Collection
 
 from herdr_orch.attention import current_items
 from herdr_orch.deploy import newest_cli
@@ -20,12 +21,21 @@ from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic, expand_home
 
 
-def agent_name(branch: str) -> str:
-    """herdr agent names: a lowercase letter, then lowercase letters, digits, - or _; 32 at most."""
+NAME_LIMIT = 32
+VALID_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+
+
+def agent_name(branch: str, taken: Collection[str] = ()) -> str:
+    """herdr agent names: a lowercase letter, then lowercase letters, digits, - or _; 32 at most.
+    A name that truncation would shorten, or that a live agent already has, ends in a short hash of the
+    branch, so two long branches sharing a prefix (dependabot-npm_and_yarn-...) never collide."""
     name = re.sub(r"[^a-z0-9_-]+", "-", branch.lower()).strip("-")
     if not name or not name[0].isalpha():
         name = "a-" + name
-    return name[:32]
+    if len(name) <= NAME_LIMIT and name not in taken:
+        return name
+    suffix = "-" + hashlib.sha1(branch.encode()).hexdigest()[:5]
+    return name[:NAME_LIMIT - len(suffix)].rstrip("-") + suffix
 
 
 DIALOG_TIMEOUT_SECONDS = 15 * 60
@@ -116,10 +126,12 @@ def seat(
     now: Callable[[], float] = time.time,
     *,
     cli: str,
+    name: str | None = None,
 ) -> Seated:
     """Seat an agent on a branch. `cli` is the herdr-orch the agent is told to run: an absolute path,
     since the agent's PATH may resolve a bare herdr-orch to a stale copy (#60). `existing` seats it on a branch already pushed to origin,
-    so a PR left without an agent gets an owner again."""
+    so a PR left without an agent gets an owner again. `name` overrides the agent name derived from the branch.
+    Seating is atomic: a failure after the worktree exists removes what was made, says so, and is an Event."""
     home = home or str(Path.home())
     ws = next((w for w in herdr.workspaces() if w.workspace_id == workspace_id), None)
     if ws is None:
@@ -136,14 +148,37 @@ def seat(
         base: str | None = f"origin/{branch}"
     else:
         base = topic.base or default_base(ws.repo_root)  # a Topic's base overrides each repo's own default
+    if name is not None and not VALID_NAME.fullmatch(name):
+        raise ValueError(f"agent name {name!r} is not valid: a lowercase letter, then lowercase letters, digits, - or _; 32 at most")
+    live = {a.name for a in herdr.agents() if a.name} | {str(r["agent"]) for r in state.tracked_branches() if r.get("agent")}
+    if name is not None and name in live:
+        raise ValueError(f"an agent named {name} already exists: pick another --name")
+    name = name or agent_name(branch, live)
+    before = {w.workspace_id for w in herdr.workspaces()}
     pane = herdr.worktree_create(workspace_id, branch, label or branch, path, base)
+    created = [w.workspace_id for w in herdr.workspaces() if w.workspace_id not in before]
+    try:
+        _start_and_brief(topic, state, herdr, branch, name, pane, home, say, existing, now, cli, ws.repo_root)
+    except TimeoutError:
+        raise  # seated and tracked: only its startup dialog is unanswered, so a person can still finish it
+    except Exception as e:
+        removed = _undo(state, herdr, branch, name, pane, created)
+        text = f"seat of {branch} failed ({e}); " + (f"removed {', '.join(removed)}" if removed else "nothing to remove")
+        state.append_event("seat_failed", text, now())
+        say(text)
+        raise
+    return Seated(name, pane)
+
+
+def _start_and_brief(topic: Topic, state: TopicState, herdr: Herdr, branch: str, name: str, pane: str, home: str,
+                     say: Callable[[str], None], existing: bool, now: Callable[[], float], cli: str,
+                     repo_root: str | None) -> None:
     for key, value in topic.env.items():
         herdr.pane_run(pane, f"export {key}={shlex.quote(expand_home(value, home))}")
-    name = agent_name(branch)
     started = herdr.agent_start(name, pane, ["--model", topic.model] if topic.model else [])
     state.take(pane, name)
     worktree_ws = next((a.workspace_id for a in herdr.agents() if a.pane_id == pane), None)
-    state.track_branch(branch, name, ws.repo_root, worktree_ws, now())
+    state.track_branch(branch, name, repo_root, worktree_ws, now())
     if not _ready(herdr, name, pane, started, say):
         raise TimeoutError(f"{name} never got past its startup dialog; brief it by hand")
     resume = (f" {branch} already has work pushed, and may have an open PR: start from the PR for the branch (gh api repos/{{owner}}/{{repo}}/pulls), "
@@ -155,7 +190,25 @@ def seat(
         f"and follow it, then start the work. When your work is validated, run: {cmd} validated {topic.name} "
         f"--branch {branch}.{resume}",
     )
-    return Seated(name, pane)
+
+
+def _undo(state: TopicState, herdr: Herdr, branch: str, name: str, pane: str, created: list[str]) -> list[str]:
+    """Remove what a failed seat made: the worktree workspace (which ends its agent), the Registry entry and
+    the tracking. Returns what was removed; a removal that itself fails is reported, not raised."""
+    removed: list[str] = []
+    for workspace in created:
+        try:
+            if herdr.worktree_remove(workspace):
+                removed.append(f"workspace/worktree {workspace}")
+        except Exception as e:
+            removed.append(f"(could not remove {workspace}: {e})")
+    if state.managed().get(pane) == name:
+        state.give_back(pane)
+        removed.append(f"registry entry {name}")
+    if state.branch_record(branch) is not None:
+        state.untrack(branch)
+        removed.append(f"tracking of {branch}")
+    return removed
 
 
 def spawn_runner(cli: str, topic: Topic, state: TopicState) -> None:
