@@ -27,6 +27,8 @@ GONE_GRACE_S = 60.0  # how long the Orchestrator may be missing before the runne
 DEPLOY_POLL_SECONDS = 30.0
 DEPLOY_CHECK_TIMEOUT_S = 60
 READY = ("idle", "done")
+HELD_BUSY = "unsent text in the input box"
+HELD_DIALOG = "a dialog is open"
 TYPING_ALERT_S = 300.0  # Events held this long behind text in the Orchestrator's input box are worth a notification
 BLOCKED_ALERT_S = 300.0  # an agent blocked this long is waiting at a dialog nobody answered
 PR_POLL_SECONDS = 120.0  # gh is slower and rate-limited next to herdr: ask about PRs less often than a tick
@@ -62,6 +64,7 @@ class Runner:
     ) -> None:
         self.topic, self.state, self.herdr, self.watches, self.notify = topic, state, herdr, watches, notify
         self.say, self.github = say, github
+        self._now = 0.0
         self._pr_polled_at = float("-inf")
         self._ledger_polled_at = float("-inf")
         self.ledger = Ledger(state, github, bool(topic.deploy_check)) if github else None
@@ -86,6 +89,7 @@ class Runner:
         self.done = False  # set once the Orchestrator has been gone a whole grace period
 
     def tick(self, now: float) -> None:
+        self._now = now
         before = len(self.state.events_since(float("-inf")))
         self._tick(now)
         seen = len(self.state.events_since(float("-inf"))) - before
@@ -290,13 +294,21 @@ class Runner:
         """Prompt an agent; False when it did not take it (blocked at a dialog, or failing), to retry later."""
         try:
             self.herdr.prompt(agent, text)
-        except AgentBlocked:
+        except AgentBlocked as e:
+            self._hold(agent, HELD_BUSY if isinstance(e, AgentBusy) else HELD_DIALOG)
             return False
         except Exception as e:  # noqa: BLE001 - one agent's prompt must not stop the others
             self._failed(f"prompt {agent}", f"prompt to {agent}", e)
             return False
         self._failures.pop(f"prompt {agent}", None)
+        self._hold(agent, None)
         return True
+
+    def _hold(self, agent: str, reason: str | None) -> None:
+        """Mark (or, with None, clear) the held prompt on the agent's tracked branches, for status and Attention."""
+        for b in self.state.tracked_branches():
+            if b.get("agent") == agent:
+                self.state.set_held(str(b["branch"]), reason, self._now)
 
     def _tell(self, branch: dict[str, object], key: str, text: str) -> None:
         """Prompt a branch's agent once per transition; the branch record remembers it across restarts.

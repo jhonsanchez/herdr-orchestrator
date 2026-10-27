@@ -46,8 +46,10 @@ class Followup:
     opened_at: float
     window_min: int
     pr: bool = False  # an open PR needs an owner or a fix
+    text: str = ""  # shown as is, when set (a held prompt)
 
 
+HELD_ALERT_S = 180.0  # a prompt held this long is raised to the person
 OTHER = "Other…"
 ANSWERABLE = ("decision", "question")  # Inbox kinds answered from the pane; anything else opens the agent's pane
 
@@ -101,7 +103,7 @@ def _banner(t: TopicStatus, now: float) -> str | None:
 
 
 def _followup_banner(f: Followup, now: float) -> str | None:
-    if now - f.opened_at < f.window_min * 60:
+    if f.text or now - f.opened_at < f.window_min * 60:
         return None
     return f"Topic {f.topic}: {f.agent} {f.reason} {int((now - f.opened_at) // 60)}m ago with no follow-up"
 
@@ -149,8 +151,8 @@ def build_view(
         item_id=str(i["id"]), topic=str(i["topic"]), guess=bool(i.get("guess")), to=str(i.get("to", "agent")),
     ) for i in items]
     for f in followups:
-        text = f"{f.reason}: needs a follow-up (re-seat {f.agent} or tell the user)" if f.pr else \
-            f"{f.agent} {f.reason}: needs a follow-up (PR, report or Inbox item)"
+        text = f.text or (f"{f.reason}: needs a follow-up (re-seat {f.agent} or tell the user)" if f.pr else
+                          f"{f.agent} {f.reason}: needs a follow-up (PR, report or Inbox item)")
         rows.append(Row(agent=f.agent, pane=f.pane, kind="followup", topic=f.topic, created_at=f.opened_at, options=[],
                         text=text))
     for a in agents if scope is None else ():  # an agent no Orchestrator manages belongs to no Topic
@@ -203,6 +205,12 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
                 followups.append(Followup(topic.name, str(b["agent"]), pane_of.get(str(b["agent"]), ""),
                                           f"{b['branch']} stuck on {led['waiting_on']} for {held}m",
                                           float(st["escalated"]), topic.heartbeat_window_min, True))
+            hold = b.get("held")
+            if isinstance(hold, dict) and now - float(hold["since"]) >= HELD_ALERT_S:
+                followups.append(Followup(topic.name, str(b["agent"]), pane_of.get(str(b["agent"]), ""), "", float(hold["since"]),
+                                          topic.heartbeat_window_min, text=(
+                    f"{b['agent']}'s prompt is held: {hold['reason']} for {int((now - float(hold['since'])) // 60)}m. "
+                    "Clear or submit it; the runner delivers on its next tick")))
         if scope in (None, topic.name):
             ledger += [f"{topic.name}: {line}" for line in ledger_lines(state, now)]
         heartbeat = state.heartbeat_at()

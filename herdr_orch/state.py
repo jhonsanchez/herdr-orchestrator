@@ -159,6 +159,19 @@ class TopicState:
         if current is not None:
             self._write_branch({**current, "stuck": record})
 
+    def set_held(self, branch: str, reason: str | None, now: float) -> None:
+        """The branch's agent has a prompt waiting that could not be delivered (reason), since when;
+        `since` stays while the reason does. None clears the mark: the prompt was delivered."""
+        record = self.branch_record(branch)
+        if record is None:
+            return
+        old = record.get("held")
+        if reason is None:
+            if old is not None:
+                self._write_branch({k: v for k, v in record.items() if k != "held"})
+        elif not (isinstance(old, dict) and old.get("reason") == reason):
+            self._write_branch({**record, "held": {"reason": reason, "since": now}})
+
     def mark_deployed(self, branch: str) -> None:
         record = self.branch_record(branch)
         if record is not None:

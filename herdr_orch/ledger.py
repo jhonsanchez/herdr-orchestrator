@@ -152,13 +152,22 @@ def _age(since: float, now: float) -> str:
     return f"{m}m" if m < 120 else f"{m // 60}h"
 
 
+def held_text(held: object, now: float) -> str | None:
+    """'held: unsent text in the input box, 12m' for a branch whose agent has an undelivered prompt."""
+    if not isinstance(held, dict):
+        return None
+    return f"held: {held['reason']}, {_age(float(held['since']), now)}"
+
+
 def ledger_lines(state: TopicState, now: float) -> list[str]:
     """The ledger's standing waits as one line each, for the Attention pane."""
     out = []
     for b in state.tracked_branches():
         led = b.get("ledger")
         if isinstance(led, dict) and led.get("state") == "waiting_on":
-            out.append(f"{b['branch']}: waiting on {led['waiting_on']} ({led['owner']}) {_age(float(led['since']), now)}")
+            held = held_text(b.get("held"), now)
+            out.append(f"{b['branch']}: waiting on {led['waiting_on']} ({led['owner']}) {_age(float(led['since']), now)}"
+                       + (f" - {held}" if held else ""))
     for u in state.untracked_prs():
         what = f"waiting on {u['waiting_on']}" if u["state"] == "waiting_on" else "working"
         out.append(f"untracked PR #{u['number']} ({u['head_ref']}): {what} ({u['owner']}) "
@@ -175,7 +184,8 @@ def status_rows(state: TopicState, now: float) -> list[dict[str, object]]:
             continue  # not swept yet
         rows.append({"branch": b["branch"], "pr": b.get("pr"), "tracked": True, "state": led["state"],
                      "waiting_on": led["waiting_on"], "owner": led["owner"], "age_s": int(max(0, now - float(led["since"]))),
-                     "checks": b.get("checks"), "mergeable_state": led.get("mergeable_state")})
+                     "checks": b.get("checks"), "mergeable_state": led.get("mergeable_state"),
+                     **({"held": held_text(b["held"], now)} if b.get("held") else {})})
     for u in state.untracked_prs():
         rows.append({"branch": u["head_ref"], "pr": u["number"], "tracked": False, "state": u["state"],
                      "waiting_on": u["waiting_on"], "owner": u["owner"], "age_s": int(max(0, now - float(u["since"]))),  # type: ignore[arg-type]
@@ -186,10 +196,13 @@ def status_rows(state: TopicState, now: float) -> list[dict[str, object]]:
 def status_table(rows: list[dict[str, object]]) -> str:
     if not rows:
         return "no tracked branches or open PRs (the Watch runner's sweep has not recorded any yet)"
-    head = ("BRANCH", "PR", "STATE", "OWNER", "IN STATE", "CHECKS", "MERGEABLE")
-    body = [(f"{r['branch']}{'' if r['tracked'] else ' (untracked PR)'}", f"#{r['pr']}" if r["pr"] else "-",
+    head: tuple[str, ...] = ("BRANCH", "PR", "STATE", "OWNER", "IN STATE", "CHECKS", "MERGEABLE")
+    body: list[tuple[str, ...]] = [(f"{r['branch']}{'' if r['tracked'] else ' (untracked PR)'}", f"#{r['pr']}" if r["pr"] else "-",
              f"waiting on {r['waiting_on']}" if r["state"] == "waiting_on" else "working", str(r["owner"]),
              _age(0, float(r["age_s"])), str(r["checks"] or "-"), str(r["mergeable_state"] or "-"))  # type: ignore[arg-type]
             for r in rows]
     widths = [max(len(x[i]) for x in [head, *body]) for i in range(len(head))]
+    if any(r.get("held") for r in rows):
+        head, body = (*head, "HELD"), [(*b, str(r.get("held") or "")) for b, r in zip(body, rows)]
+        widths = [max(len(x[i]) for x in [head, *body]) for i in range(len(head))]
     return "\n".join("  ".join(c.ljust(w) for c, w in zip(line, widths)).rstrip() for line in [head, *body])

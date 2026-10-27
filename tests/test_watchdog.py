@@ -123,3 +123,36 @@ class WatchdogTest(unittest.TestCase):
         self.state.set_ledger("issue-1", {"state": "working", "waiting_on": None, "owner": "agent"}, 0)
         self.runner.tick(500 * MIN)
         self.assertEqual(self.stuck_events(), [])
+
+
+class HeldPromptTest(WatchdogTest):
+    """A prompt the agent could not take (the person's unsent text, a dialog) is marked on the ledger,
+    raised in the Attention pane after a few minutes, and cleared once delivered."""
+
+    def held(self) -> object:
+        return (self.state.branch_record("issue-1") or {}).get("held")
+
+    def test_busy_hold_is_recorded_shown_raised_and_cleared_on_delivery(self) -> None:
+        from herdr_orch.ledger import ledger_lines, status_rows, status_table
+        self.wait("ci", "agent", 0)
+        self.herdr.busy_agents.add("issue-1")
+        self.runner.tick(20 * MIN)  # the nudge is due and refused
+        self.assertEqual(self.held(), {"reason": "unsent text in the input box", "since": 20 * MIN})
+        self.runner.tick(22 * MIN)  # still refused: `since` stays
+        self.assertEqual((self.held() or {})["since"], 20 * MIN)  # type: ignore[index]
+        self.assertIn("held: unsent text in the input box, 2m", status_table(status_rows(self.state, 22 * MIN)))
+        self.assertTrue(ledger_lines(self.state, 22 * MIN)[0].endswith("- held: unsent text in the input box, 2m"))
+        quiet = load(self.root, [self.topic], self.herdr, 22 * MIN)
+        self.assertFalse([r for g in quiet.groups for r in g.rows if r.kind == "followup"])  # too soon
+        view = load(self.root, [self.topic], self.herdr, 24 * MIN)
+        (row,) = [r for g in view.groups for r in g.rows if r.kind == "followup"]
+        self.assertIn("issue-1's prompt is held: unsent text in the input box for 4m", row.text)
+        self.herdr.busy_agents.clear()
+        self.runner.tick(25 * MIN)  # the person cleared it: the nudge goes out and the mark goes
+        self.assertEqual((len(self.prompts()), self.held()), (1, None))
+
+    def test_dialog_hold(self) -> None:
+        self.wait("ci", "agent", 0)
+        self.herdr.blocked_agents.add("issue-1")
+        self.runner.tick(20 * MIN)
+        self.assertEqual((self.held() or {})["reason"], "a dialog is open")  # type: ignore[index]
