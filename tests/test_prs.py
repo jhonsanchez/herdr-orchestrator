@@ -7,7 +7,7 @@ from unittest import mock
 
 from herdr_orch import seating
 from herdr_orch.attention import load
-from herdr_orch.github import PullRequest, checks_of, parse_pr
+from herdr_orch.github import PullRequest, checks_args, checks_of, parse_pr, pulls_args, rollup_of
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch.runner import PR_POLL_SECONDS, Runner
 from herdr_orch.seating import release, seat, validated
@@ -48,12 +48,27 @@ class ChecksTest(unittest.TestCase):
         self.assertEqual(checks_of([{"state": "ERROR"}]), "failing")  # a commit status, not a check run
 
     def test_the_open_pr_wins_else_the_newest(self) -> None:
-        raw = ('[{"number":3,"state":"MERGED","url":"u3","statusCheckRollup":[]},'
-               '{"number":5,"state":"CLOSED","url":"u5","statusCheckRollup":[]}]')
+        raw = ('[{"number":3,"state":"closed","merged_at":"t","merge_commit_sha":"abc","html_url":"u3"},'
+               '{"number":5,"state":"closed","merged_at":null,"html_url":"u5"}]')
         self.assertEqual(parse_pr(raw), PullRequest(5, "closed", "none", "u5"))
-        raw = raw.replace('"number":3,"state":"MERGED"', '"number":3,"state":"OPEN"')
-        self.assertEqual(parse_pr(raw), PullRequest(3, "open", "none", "u3"))
+        raw = raw.replace('"number":3,"state":"closed"', '"number":3,"state":"open"')
+        self.assertEqual(parse_pr(raw, "failing"), PullRequest(3, "open", "failing", "u3"))
+        merged = '[{"number":3,"state":"closed","merged_at":"t","merge_commit_sha":"abc","html_url":"u3"}]'
+        self.assertEqual(parse_pr(merged), PullRequest(3, "merged", "none", "u3", "abc"))
         self.assertIsNone(parse_pr("[]"))
+
+    def test_gh_is_asked_through_the_rest_endpoints_never_graphql(self) -> None:
+        self.assertEqual(pulls_args("issue-1"), [
+            "gh", "api", "-X", "GET", "repos/{owner}/{repo}/pulls",
+            "-f", "head={owner}:issue-1", "-f", "state=all", "-f", "per_page=10"])
+        self.assertEqual(checks_args("abc")[:5], ["gh", "api", "-X", "GET", "repos/{owner}/{repo}/commits/abc/check-runs"])
+        self.assertNotIn("pr", pulls_args("issue-1")[:2])
+
+    def test_rest_runs_and_statuses_make_one_rollup(self) -> None:
+        rollup = rollup_of({"check_runs": [{"conclusion": "success"}, {"conclusion": None}]},
+                           {"statuses": [{"state": "success"}]})
+        self.assertEqual(checks_of(rollup), "pending")
+        self.assertEqual(checks_of(rollup_of({"check_runs": [{"conclusion": "failure"}]}, {})), "failing")
 
 
 class PrObligationsTest(unittest.TestCase):
@@ -201,7 +216,7 @@ class ExistingBranchTest(unittest.TestCase):
         [call] = self.herdr.of("worktree_create")
         self.assertEqual(call[2], "issue-10")
         self.assertEqual(call[5], "origin/issue-10")
-        self.assertIn("gh pr view", str(self.herdr.of("prompt")[0][2]))
+        self.assertIn("gh api repos", str(self.herdr.of("prompt")[0][2]))
 
     def test_seat_existing_refuses_a_branch_origin_does_not_have(self) -> None:
         with self.assertRaisesRegex(ValueError, "origin has no branch nope"):

@@ -1,6 +1,7 @@
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -70,9 +71,9 @@ class DeployGateTest(unittest.TestCase):
         self.assertEqual(self.prompts(), [])
 
     def test_parse_pr_reads_the_merge_commit(self) -> None:
-        raw = '[{"number":3,"state":"MERGED","url":"u","mergeCommit":{"oid":"abc"},"statusCheckRollup":[]}]'
+        raw = '[{"number":3,"state":"closed","merged_at":"t","html_url":"u","merge_commit_sha":"abc"}]'
         self.assertEqual(parse_pr(raw).merge_sha, "abc")  # type: ignore[union-attr]
-        raw = '[{"number":3,"state":"OPEN","url":"u","mergeCommit":null,"statusCheckRollup":[]}]'
+        raw = '[{"number":3,"state":"open","merged_at":null,"html_url":"u","merge_commit_sha":"zzz"}]'
         self.assertEqual(parse_pr(raw).merge_sha, "")  # type: ignore[union-attr]
 
 
@@ -107,6 +108,9 @@ class PluginDeployTest(unittest.TestCase):
         self.assertFalse(runner_on(self.checkout, os.getpid()))
         child = subprocess.Popen(["sleep", "5"], env={"PYTHONPATH": f"{self.checkout}/.."})
         self.addCleanup(child.kill)
+        deadline = time.monotonic() + 5  # Popen returns before the child execs: its environ is the parent's until then
+        while not runner_on(self.checkout, child.pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
         self.assertTrue(runner_on(self.checkout, child.pid))
 
     def test_is_deployed_needs_both_the_sha_and_the_runner(self) -> None:

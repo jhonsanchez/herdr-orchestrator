@@ -129,7 +129,7 @@ def seat(
     state.track_branch(branch, name, ws.repo_root, worktree_ws, now())
     if not _ready(herdr, name, pane, started, say):
         raise TimeoutError(f"{name} never got past its startup dialog; brief it by hand")
-    resume = (f" {branch} already has work pushed, and may have an open PR: start from `gh pr view` and `gh pr checks`, "
+    resume = (f" {branch} already has work pushed, and may have an open PR: start from the PR for the branch (gh api repos/{{owner}}/{{repo}}/pulls), "
               "answer any review feedback and fix any failing check on the same branch.") if existing else ""
     herdr.prompt(
         name,
