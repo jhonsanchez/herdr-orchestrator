@@ -196,9 +196,10 @@ class TopicState:
 
     # Inbox: one JSON object per line, format v2 (docs/inbox-v1.md).
     def escalate(self, agent: str, pane: str, kind: Kind, question: str, options: list[str],
-                 now: float, guess: bool = False, to: Addressee = "agent") -> None:
+                 now: float, guess: bool = False, to: Addressee = "agent",
+                 item_id: str | None = None) -> None:
         item: dict[str, object] = {
-            "v": 2, "to": to, "id": uuid.uuid4().hex[:12], "topic": self.topic, "agent": agent, "pane": pane,
+            "v": 2, "to": to, "id": item_id or uuid.uuid4().hex[:12], "topic": self.topic, "agent": agent, "pane": pane,
             "kind": kind, "question": question, "options": options, "guess": guess,
             "status": "open", "answer": None, "created_at": now,
         }

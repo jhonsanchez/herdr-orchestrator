@@ -13,6 +13,9 @@ from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic, topic_for
 
 
+SWITCH_PREFIX = "switch-"
+
+
 def checked_out_branch(path: str) -> str | None:
     """The branch checked out at a worktree; None when detached or unreadable."""
     try:
@@ -61,6 +64,7 @@ def reconcile(
     managed = state.managed()
     adopted = []
     switched = []
+    flagged = set()
     for ws in herdr.workspaces():
         if not (ws.repo_root and ws.checkout_path and ws.checkout_path != ws.repo_root):
             continue  # not a worktree
@@ -73,18 +77,26 @@ def reconcile(
         held = next((r for r in state.tracked_branches()
                      if r.get("workspace_id") == ws.workspace_id or r.get("agent") == owner.name), None)
         if held is not None:  # one branch per workspace and agent: a second one is not ours to adopt
-            _flag_switch(state, owner, branch, str(held["branch"]), now)
+            flagged.add(_flag_switch(state, owner, ws.label, ws.workspace_id, branch, str(held["branch"]), now))
             switched.append(branch)
             continue
         state.track_branch(branch, str(owner.name), ws.repo_root, ws.workspace_id, now)
         adopted.append(branch)
 
+    for item in current_items(state.inbox_lines()):  # released workspace or branch back: the flag is moot
+        if str(item["id"]).startswith(SWITCH_PREFIX) and item["id"] not in flagged:
+            state.resolve(str(item["id"]), "resolved")
+
     return Reconciled(adopted, dropped, state.compact_inbox(), switched)
 
 
-def _flag_switch(state: TopicState, owner: Agent, branch: str, held: str, now: float) -> None:
-    """Raise it once in the Attention pane: the agent works `branch` in the workspace of `held`."""
-    question = f"{owner.name} switched to {branch} in the workspace of {held}: seat {branch} separately"
-    if any(i.get("agent") == owner.name and i.get("question") == question for i in current_items(state.inbox_lines())):
-        return
-    state.escalate(str(owner.name), owner.pane_id, "question", question, [], now, to="orchestrator")
+def _flag_switch(state: TopicState, owner: Agent, label: str, workspace_id: str, branch: str, held: str,
+                 now: float) -> str:
+    """Raise it once in the Attention pane: the agent works `branch` in the workspace of `held`.
+    The id is derived from (workspace, branch), so every pass lands on the same item."""
+    item_id = f"{SWITCH_PREFIX}{workspace_id}-{branch}"
+    question = f"{owner.name or label} switched to {branch} in the workspace of {held}: seat {branch} separately"
+    if not any(i["id"] == item_id for i in current_items(state.inbox_lines())):
+        state.escalate(str(owner.name or label), owner.pane_id, "question", question, [], now, to="orchestrator",
+                       item_id=item_id)
+    return item_id
