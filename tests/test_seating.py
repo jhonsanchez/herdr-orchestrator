@@ -102,6 +102,19 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual(prompt[1], "falcon-12")
         self.assertIn(str(self.topic.brief_path), str(prompt[2]))
 
+    def test_seat_refuses_a_branch_or_workspace_a_live_agent_already_tracks(self) -> None:
+        r = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u")
+        self.herdr.agent_list.append(Agent("falcon-12", "idle", r.pane_id, "w9"))
+        self.state.track_branch("FALCON-12", "falcon-12", "/home/u/projects/zebra/zpc", "w9", 1.0)
+        ws = "w9"
+        with self.assertRaisesRegex(ValueError, "FALCON-12 is already tracked"):
+            seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u")
+        self.herdr.workspace_list.append(Workspace(str(ws), "FALCON-12", "/home/u/projects/zebra/zpc", "/wt"))
+        with self.assertRaisesRegex(ValueError, "one branch in one workspace"):
+            seat(self.topic, self.state, self.herdr, workspace_id=str(ws), branch="FALCON-13", home="/home/u")
+        self.assertEqual(len(self.herdr.of("worktree_create")), 1)
+        self.assertEqual(self.state.managed(), {r.pane_id: "falcon-12"})
+
     def write_playbook(self, text: str = "# Playbook\n\n## Yours alone\n\n- Production.\n") -> None:
         self.topic.dir.mkdir(parents=True, exist_ok=True)
         self.topic.playbook_path.write_text(text)
