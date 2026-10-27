@@ -15,7 +15,7 @@ from typing import Callable, Protocol
 
 from herdr_orch.attention import current_items
 from herdr_orch.github import GitHub
-from herdr_orch.herdr import Agent, Herdr
+from herdr_orch.herdr import Agent, AgentBlocked, Herdr
 from herdr_orch.seating import release
 from herdr_orch.state import Event, TopicState
 from herdr_orch.topics import Topic
@@ -25,6 +25,7 @@ GONE_GRACE_S = 60.0  # how long the Orchestrator may be missing before the runne
 DEPLOY_POLL_SECONDS = 30.0
 DEPLOY_CHECK_TIMEOUT_S = 60
 READY = ("idle", "done")
+BLOCKED_ALERT_S = 300.0  # an agent blocked this long is waiting at a dialog nobody answered
 PR_POLL_SECONDS = 120.0  # gh is slower and rate-limited next to herdr: ask about PRs less often than a tick
 # Spinner and timer lines change every second without any progress.
 NOISE = re.compile(r"^\s*$|[✻✶✢✽✳·*] [A-Z][a-z]+…|\([0-9]+m? ?[0-9]*s")
@@ -71,6 +72,8 @@ class Runner:
         self._alerted = False
         self._chased: set[tuple[str, float]] = set()
         self._failures: dict[str, str] = {}
+        self._blocked_since: dict[str, float] = {}
+        self._blocked_alerted: set[str] = set()
         self._missing_since: float | None = None
         self.ticks = 0
         self.done = False  # set once the Orchestrator has been gone a whole grace period
@@ -105,6 +108,7 @@ class Runner:
                 if stale:
                     self.state.append_event("stale", stale, now)
         self.stale.forget(names)
+        self._watch_blocked(now, managed, agents)
 
         self._step("follow PRs", self._follow_prs, now)
         self._step("deploy gate", self._await_deploys, now, agents)
@@ -205,11 +209,45 @@ class Runner:
                 self._tell(branch, "merged", f"Your PR #{pr.number} is merged ({(pr.merge_sha or 'unknown')[:8]}). "
                                              "Wait for the deploy prompt before validating.")
 
+    def _watch_blocked(self, now: float, managed: dict[str, str], agents: dict[str, Agent]) -> None:
+        """One Event per episode of a Managed agent blocked past BLOCKED_ALERT_S, naming the dialog it shows."""
+        for pane, name in managed.items():
+            agent = agents.get(name)
+            if agent is None or agent.status != "blocked":
+                self._blocked_since.pop(name, None)
+                self._blocked_alerted.discard(name)
+                continue
+            since = self._blocked_since.setdefault(name, now)
+            if now - since >= BLOCKED_ALERT_S and name not in self._blocked_alerted:
+                self._blocked_alerted.add(name)
+                lines = [ln.strip(" │╭╮╰╯─") for ln in self.herdr.read_screen(pane).splitlines()]
+                lines = [ln for ln in lines if ln]
+                dialog = next((ln for ln in lines if "?" in ln), lines[0] if lines else "unknown dialog")
+                self.state.append_event("blocked", f"{name} blocked {int((now - since) // 60)}m at: {dialog[:80]}", now)
+
+    def _told(self, branch: dict[str, object], key: str) -> bool:
+        return key in (branch.get("told") or [])  # type: ignore[operator]
+
+    def _prompt(self, agent: str, text: str) -> bool:
+        """Prompt an agent; False when it did not take it (blocked at a dialog, or failing), to retry later."""
+        try:
+            self.herdr.prompt(agent, text)
+        except AgentBlocked:
+            return False
+        except Exception as e:  # noqa: BLE001 - one agent's prompt must not stop the others
+            self._failed(f"prompt {agent}", f"prompt to {agent}", e)
+            return False
+        self._failures.pop(f"prompt {agent}", None)
+        return True
+
     def _tell(self, branch: dict[str, object], key: str, text: str) -> None:
-        """Prompt a branch's agent once per transition; the branch record remembers it across restarts."""
+        """Prompt a branch's agent once per transition; the branch record remembers it across restarts.
+        Recorded only after the agent took the prompt: a blocked agent is told again on a later tick."""
         agent = str(branch.get("agent"))
-        if agent in {a.name for a in self.herdr.agents()} and self.state.mark_told(str(branch["branch"]), key):
-            self.herdr.prompt(agent, f"[herdr-orchestrator] {text}")
+        if self._told(branch, key) or agent not in {a.name for a in self.herdr.agents()}:
+            return
+        if self._prompt(agent, f"[herdr-orchestrator] {text}"):
+            self.state.mark_told(str(branch["branch"]), key)
 
     def _release_validated(self, now: float) -> None:
         """Release a validated branch whose PR is merged or closed. It never waits for the deploy
@@ -257,12 +295,13 @@ class Runner:
             if not self._deployed(branch):
                 continue
             name = str(branch["branch"])
-            self.state.mark_deployed(name)
             sha = str(branch["merge_sha"])[:8]
-            self.state.append_event("deploy", f"{name} deployed at {sha}; its agent is prompted to validate", now)
             if str(branch.get("agent")) in agents:
                 text = (f"Your PR #{branch.get('pr')}'s merge ({sha}) is deployed. Validate it now: check that the installed plugin is at "
                         f"{sha}. {self.topic.validate} Run `~/.local/bin/herdr-orch validated {self.topic.name} --branch {name} "
                         "--evidence '<what you ran and its last output>'` only after you have checked: an empty "
                         "evidence is refused.")
-                self.herdr.prompt(str(branch["agent"]), f"[herdr-orchestrator] {' '.join(text.split())}")
+                if not self._prompt(str(branch["agent"]), f"[herdr-orchestrator] {' '.join(text.split())}"):
+                    continue  # not taken (blocked at a dialog): the gate stays open, retried next poll
+            self.state.mark_deployed(name)
+            self.state.append_event("deploy", f"{name} deployed at {sha}; its agent is prompted to validate", now)

@@ -15,6 +15,11 @@ from herdr_orch.state import PLUGIN_ID
 ATTENTION_LABEL = "Attention"  # the title herdr gives the pane in herdr-plugin.toml
 
 
+
+class AgentBlocked(RuntimeError):
+    """herdr refused a prompt: the agent is blocked at a dialog, so nothing was sent."""
+
+
 @dataclass(frozen=True)
 class Agent:
     name: str | None
@@ -120,15 +125,23 @@ class CliHerdr:
     def _screen_of(self, agent: str) -> str:
         return self._run("agent", "read", agent, "--source", "visible", "--lines", "80").stdout
 
+    def _send(self, agent: str, text: str) -> None:
+        try:
+            self._json("agent", "prompt", agent, text)
+        except subprocess.CalledProcessError as e:
+            if "agent_blocked" in f"{e.stdout or ''}{e.stderr or ''}":
+                raise AgentBlocked(f"{agent} is blocked at a dialog; the prompt was not sent") from e
+            raise
+
     def prompt(self, agent: str, text: str) -> None:
         """Send, then make sure the agent took it. Text on screen isn't enough: a prompt
         can be left pasted in the input box with its Enter lost, or swallowed while
         Claude settles after a startup screen. A pasted one gets Enter pressed once, a
         missing one is resent once; RuntimeError otherwise (the runner then retries
-        on its next tick)."""
+        on its next tick). AgentBlocked when herdr refuses it because the agent sits at a dialog."""
         snippet = text.splitlines()[0][:30]
         for _ in range(2):
-            self._json("agent", "prompt", agent, text)
+            self._send(agent, text)
             if self._picked_up(agent, 8):
                 return
             where = delivery(self._screen_of(agent), snippet)

@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from herdr_orch.herdr import CliHerdr
+from herdr_orch.herdr import AgentBlocked, CliHerdr
 from herdr_orch.state import PLUGIN_ID
 
 
@@ -50,6 +50,23 @@ class CliHerdrWorktreeRemoveTest(unittest.TestCase):
         done = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
         with mock.patch("herdr_orch.herdr.subprocess.run", return_value=done):
             self.assertTrue(CliHerdr("herdr").worktree_remove("w23"))
+
+
+BLOCKED = '{"error":{"code":"agent_blocked","message":"agent issue-1 is blocked"}}'
+
+
+class CliHerdrPromptBlockedTest(unittest.TestCase):
+    def test_herdr_refusing_a_blocked_agent_raises_agent_blocked(self) -> None:
+        err = subprocess.CalledProcessError(1, ["herdr"], output=BLOCKED, stderr="")
+        with mock.patch("herdr_orch.herdr.subprocess.run", side_effect=err):
+            with self.assertRaises(AgentBlocked):
+                CliHerdr("herdr").prompt("issue-1", "hello")
+
+    def test_any_other_prompt_failure_still_raises_as_is(self) -> None:
+        err = subprocess.CalledProcessError(1, ["herdr"], output='{"error":{"code":"internal"}}', stderr="")
+        with mock.patch("herdr_orch.herdr.subprocess.run", side_effect=err):
+            with self.assertRaises(subprocess.CalledProcessError):
+                CliHerdr("herdr").prompt("issue-1", "hello")
 
 
 if __name__ == "__main__":
