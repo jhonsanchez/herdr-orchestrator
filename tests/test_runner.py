@@ -183,10 +183,6 @@ class RunnerTest(unittest.TestCase):
         self.state.clear_runner(111)
         self.assertIsNone(self.state.runner_status())
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_a_question_resolves_when_its_agent_starts_a_turn_again(self) -> None:
         self.state.take("w1:waki-1", "waki-1")
         self.state.escalate("waki-1", "w1:waki-1", "question", "which?", [], 1.0)
@@ -199,3 +195,6 @@ if __name__ == "__main__":
         [left] = current_items(self.state.inbox_lines())
         self.assertEqual(left["to"], "orchestrator")
 
+
+if __name__ == "__main__":
+    unittest.main()

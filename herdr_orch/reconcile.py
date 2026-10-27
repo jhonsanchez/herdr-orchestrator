@@ -100,7 +100,8 @@ def _sweep(state: TopicState, agents: list[Agent], now: float) -> list[str]:
     follow up with or to answer. Their gone Events are closed; their open Inbox items are dismissed."""
     live = {a.name for a in agents if a.name}
     owned = {str(r.get("agent")) for r in state.tracked_branches()} | set(state.managed().values())
-    items = current_items(state.inbox_lines())
+    panes = {a.pane_id for a in agents}
+    items = [i for i in current_items(state.inbox_lines()) if i.get("pane") not in panes]  # a live pane still owns its rows
     endings = (_ending(e) for e in state.events_since(float("-inf")))
     names = {e[0] for e in endings if e and e[1] == "gone"} | {str(i["agent"]) for i in items if i.get("agent")}
     swept = []
