@@ -219,6 +219,8 @@ class Runner:
         for branch in self.state.tracked_branches():
             if "validated_at" not in branch or branch.get("pr_state") not in ("merged", "closed"):
                 continue
+            if not str(branch.get("evidence") or "").strip():
+                continue  # validated without evidence: an Obligation asks for it, nothing is released
             name = str(branch["branch"])
             self._tell(branch, "released", f"{name} is validated and merged: your workspace is being released. "
                                            "Stop; do not run anything more.")
@@ -260,7 +262,7 @@ class Runner:
             self.state.append_event("deploy", f"{name} deployed at {sha}; its agent is prompted to validate", now)
             if str(branch.get("agent")) in agents:
                 text = (f"Your PR #{branch.get('pr')}'s merge ({sha}) is deployed. Validate it now: check that the installed plugin is at "
-                        f"{sha}. {self.topic.validate} Run `herdr-orch validated {self.topic.name} --branch {name} "
+                        f"{sha}. {self.topic.validate} Run `~/.local/bin/herdr-orch validated {self.topic.name} --branch {name} "
                         "--evidence '<what you ran and its last output>'` only after you have checked: an empty "
                         "evidence is refused.")
                 self.herdr.prompt(str(branch["agent"]), f"[herdr-orchestrator] {' '.join(text.split())}")

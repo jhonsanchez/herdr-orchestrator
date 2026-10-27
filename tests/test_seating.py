@@ -6,7 +6,7 @@ from pathlib import Path
 
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch import seating
-from herdr_orch.seating import agent_name, default_base, seat, start, startup_screen
+from herdr_orch.seating import agent_name, default_base, ensure_link, seat, start, startup_screen
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
 from tests.fakes import FakeHerdr
@@ -255,3 +255,19 @@ class SeatingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnsureLinkTest(unittest.TestCase):
+    def test_the_brief_names_the_stable_link_and_it_follows_an_install_that_moves(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve() / "home"
+            old, new = Path(tmp).resolve() / "plug" / "1-0" / "bin" / "herdr-orch", Path(tmp).resolve() / "plug" / "2-0" / "bin" / "herdr-orch"
+            for cli in (old, new):
+                cli.parent.mkdir(parents=True)
+                cli.write_text("#!/bin/sh\n")
+            briefed = ensure_link(str(old), str(home))
+            self.assertEqual(briefed, f"{home}/.local/bin/herdr-orch")
+            self.assertEqual(Path(briefed).resolve(), old)
+            self.assertEqual(ensure_link(str(old), str(home)), briefed)  # already right: untouched
+            self.assertEqual(ensure_link(str(new), str(home)), briefed)  # stale: repointed, same briefed path
+            self.assertEqual(Path(briefed).resolve(), new)

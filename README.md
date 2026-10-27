@@ -17,7 +17,7 @@ claude plugin marketplace add jhonsanchez/herdr-orchestrator
 claude plugin install herdr-orchestrator@herdr-orchestrator  # the routing hooks
 ```
 
-Herdr doesn't report where it installed a plugin, and keeps old installations after `herdr plugin update`. To get a stable path for scripts, run the `link` action once after installing and after each update; it points `~/.local/bin/herdr-orch` at the current installation:
+Herdr doesn't report where it installed a plugin, and keeps old installations after `herdr plugin update`. To get a stable path for scripts, run the `link` action once after installing and after each update (`start` and `seat` also create or repoint it themselves, and briefs name it, never a versioned install path); it points `~/.local/bin/herdr-orch` at the current installation:
 
 ```sh
 herdr plugin action invoke jhonsanchez.orchestrator.link

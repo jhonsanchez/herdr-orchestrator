@@ -10,6 +10,7 @@ from herdr_orch.deploy import compare_args, holds, installed_checkout, is_deploy
 from herdr_orch.github import PullRequest, parse_pr
 from herdr_orch.herdr import Agent
 from herdr_orch.runner import DEPLOY_POLL_SECONDS, PR_POLL_SECONDS, Runner
+from herdr_orch.watches_core import open_obligations
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
 from tests.fakes import FakeHerdr
@@ -92,13 +93,25 @@ class DeployGateTest(unittest.TestCase):
         self.assertIn("herdr-orch validated waki --branch issue-1", text)
         self.assertIn("--evidence", text)
 
+    def test_validated_without_evidence_is_not_released_and_raises_a_followup(self) -> None:
+        self.merge()
+        self.state.mark_validated("issue-1", 2)
+        self.runner.tick(1 + PR_POLL_SECONDS)
+        self.assertIsNotNone(self.state.branch_record("issue-1"))
+        self.assertNotIn("released", " ".join(self.told()))
+        got = open_obligations([], [], {"issue-1": "idle"}, {"issue-1"}, self.state.tracked_branches())
+        self.assertEqual([(o.agent, o.reason) for o in got], [("issue-1", "issue-1 validated without evidence")])
+        self.state.mark_validated("issue-1", 3, "pytest: 12 passed")  # validating again with evidence releases it
+        self.runner.tick(1 + 2 * PR_POLL_SECONDS)
+        self.assertIsNone(self.state.branch_record("issue-1"))
+
     def test_green_merged_and_released_each_prompt_once_across_restarts(self) -> None:
         self.github.prs["issue-1"] = PullRequest(20, "open", "passing")
         self.runner.tick(1)
         self.assertEqual([t for t in self.told() if "green" in t].__len__(), 1)
         self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc123def456")
         self.runner.tick(1 + PR_POLL_SECONDS)
-        self.state.mark_validated("issue-1", 2)
+        self.state.mark_validated("issue-1", 2, "pytest: 12 passed")
         again = Runner(self.topic, self.state, self.herdr, Quiet(), notify=lambda t, b: None, github=self.github)
         again.tick(1 + 2 * PR_POLL_SECONDS)
         again.tick(1 + 3 * PR_POLL_SECONDS)
@@ -228,7 +241,7 @@ class AutoReleaseTest(unittest.TestCase):
 
     def test_validated_and_merged_is_released_without_a_deploy_gate(self) -> None:
         self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc")
-        self.state.mark_validated("issue-1", 0)
+        self.state.mark_validated("issue-1", 0, "ran it")
         self.runner.tick(1)
         self.assertTrue(self.released())
         self.assertEqual(self.herdr.of("worktree_remove"), [("worktree_remove", "w9")])
@@ -239,7 +252,7 @@ class AutoReleaseTest(unittest.TestCase):
         notes: list[tuple[str, str]] = []
         self.runner.notify = lambda t, b: notes.append((t, b))
         self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc")
-        self.state.mark_validated("issue-1", 0)
+        self.state.mark_validated("issue-1", 0, "ran it")
         boom = subprocess.CalledProcessError(1, ["herdr"], output='{"error":{"code":"internal"}}')
         with mock.patch.object(self.herdr, "worktree_remove", side_effect=boom):
             self.runner.tick(1)
@@ -257,7 +270,7 @@ class AutoReleaseTest(unittest.TestCase):
         self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc")
         self.runner.tick(1)
         self.assertFalse(self.released())
-        self.state.mark_validated("issue-1", 1)
+        self.state.mark_validated("issue-1", 1, "ran it")
         self.github.down = True
         self.runner.tick(1 + PR_POLL_SECONDS)
         self.assertFalse(self.released())

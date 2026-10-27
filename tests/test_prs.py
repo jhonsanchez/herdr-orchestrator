@@ -155,7 +155,7 @@ class RunnerPrTest(unittest.TestCase):
         self.github.prs["issue-1"] = PullRequest(48, "merged", "passing", merge_sha="aaa11111")
         self.runner.tick(1)
         self.state.mark_deployed("issue-1")
-        self.state.mark_validated("issue-1", 2)
+        self.state.mark_validated("issue-1", 2, "ran it")
         self.github.prs["issue-1"] = PullRequest(56, "open", "passing")
         self.runner.tick(1 + PR_POLL_SECONDS)
         record = self.state.branch_record("issue-1")
@@ -173,7 +173,7 @@ class RunnerPrTest(unittest.TestCase):
         self.github.prs["issue-1"] = PullRequest(48, "merged", "passing", merge_sha="aaa11111")
         self.runner.tick(1)
         self.github.prs["issue-1"] = PullRequest(56, "open", "pending")
-        self.state.mark_validated("issue-1", 2)  # the agent validated #48 before #56 was seen
+        self.state.mark_validated("issue-1", 2, "ran it")  # the agent validated #48 before #56 was seen
         self.runner.tick(1 + PR_POLL_SECONDS)
         record = self.state.branch_record("issue-1")
         assert record is not None
