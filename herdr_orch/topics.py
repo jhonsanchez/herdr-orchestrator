@@ -54,6 +54,7 @@ class Topic:
     heartbeat_window_min: int = 15
     stale_min: int = 40
     hung_min: int = 60
+    stuck: dict[str, int] = field(default_factory=dict)  # minutes per waiting_on state, over watchdog.DEFAULT_LIMITS_MIN
 
     @property
     def config_root(self) -> Path:

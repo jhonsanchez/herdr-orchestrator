@@ -148,6 +148,12 @@ class TopicState:
         self._write_branch({**record, "ledger": {**entry, "since": now}})
         return True
 
+    def set_stuck(self, branch: str, record: dict[str, object]) -> None:
+        """What the watchdog did for the branch's current ledger state (see watchdog.py)."""
+        current = self.branch_record(branch)
+        if current is not None:
+            self._write_branch({**current, "stuck": record})
+
     def mark_deployed(self, branch: str) -> None:
         record = self.branch_record(branch)
         if record is not None:

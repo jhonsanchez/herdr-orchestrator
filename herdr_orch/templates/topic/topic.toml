@@ -25,3 +25,8 @@
 # heartbeat_window_min = 15
 # stale_min = 40
 # hung_min = 60
+# Minutes a branch may hold a ledger state before the watchdog raises a stuck Event (and nudges its agent;
+# after a second limit it becomes an Attention follow-up). Defaults: ci 20, review 60, conflict 15, deploy 15,
+# validate 10, agent 10; merge and human have none.
+# [stuck]
+# ci = 30

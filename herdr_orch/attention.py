@@ -196,6 +196,13 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
                                   state.tracked_branches()):
             followups.append(Followup(topic.name, o.agent, pane_of.get(o.agent, ""), o.reason, o.opened_at,
                                       topic.heartbeat_window_min, o.pr))
+        for b in state.tracked_branches():
+            st, led = b.get("stuck"), b.get("ledger")
+            if isinstance(st, dict) and st.get("escalated") and isinstance(led, dict):
+                held = int((now - float(led["since"])) // 60)
+                followups.append(Followup(topic.name, str(b["agent"]), pane_of.get(str(b["agent"]), ""),
+                                          f"{b['branch']} stuck on {led['waiting_on']} for {held}m",
+                                          float(st["escalated"]), topic.heartbeat_window_min, True))
         if scope in (None, topic.name):
             ledger += [f"{topic.name}: {line}" for line in ledger_lines(state, now)]
         heartbeat = state.heartbeat_at()

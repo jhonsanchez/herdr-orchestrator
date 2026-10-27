@@ -11,12 +11,13 @@ import os
 import re
 import subprocess
 import time
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from herdr_orch.attention import current_items
 from herdr_orch.github import GitHub
 from herdr_orch.herdr import Agent, AgentBlocked, AgentBusy, Herdr
 from herdr_orch.ledger import Ledger
+from herdr_orch.watchdog import nudge_text, stage, stuck_key
 from herdr_orch.seating import release
 from herdr_orch.state import Event, TopicState
 from herdr_orch.topics import Topic, topic_for
@@ -118,6 +119,7 @@ class Runner:
 
         self._step("follow PRs", self._follow_prs, now)
         self._step("ledger", self._sweep_ledger, now, agents)
+        self._step("watchdog", self._watch_stuck, now)
         self._step("deploy gate", self._await_deploys, now, agents)
         self._step("release", self._release_validated, now)
 
@@ -234,6 +236,36 @@ class Runner:
         roots |= {str(b["repo_root"]) for b in self.state.tracked_branches() if b.get("repo_root")}
         for text in self.ledger.sweep(sorted(roots), {n: a.status for n, a in agents.items()}, now):
             self.state.append_event("ledger", text, now)
+
+    def _watch_stuck(self, now: float) -> None:
+        """A tracked branch's ledger state held past its limit: one `stuck` Event and one nudge to the agent
+        on it; past a second limit it is raised to the person. The branch record keeps what was done."""
+        for b in self.state.tracked_branches():
+            led = b.get("ledger")
+            if not isinstance(led, dict):
+                continue
+            name = str(b["branch"])
+            key = stuck_key(led) if led.get("state") == "waiting_on" else None
+            held_rec = b.get("stuck")
+            done: dict[str, Any] = held_rec if isinstance(held_rec, dict) else {}
+            if done and done.get("key") != key:
+                self.state.set_stuck(name, {})  # the state changed: start over
+                done = {}
+            due = stage(led, done, self.topic.stuck, now)
+            if due is None:
+                continue
+            minutes, what = int((now - float(led["since"])) // 60), str(led["waiting_on"])
+            if due == "stuck":
+                self.state.append_event("stuck", f"{name} has been waiting on {what} ({led['owner']}) for {minutes}m", now)
+                done = {"key": key, "event": True}
+                self.state.set_stuck(name, done)
+            elif due == "escalate":
+                self.state.set_stuck(name, {**done, "escalated": now})
+                self.state.append_event("stuck", f"{name} is still waiting on {what} after {minutes}m: raised to you", now)
+            agent = str(b.get("agent"))
+            if due != "escalate" and not done.get("nudged") and (led["owner"] == "agent" or what == "agent") \
+                    and agent in {a.name for a in self.herdr.agents()} and self._prompt(agent, nudge_text(what, minutes)):
+                self.state.set_stuck(name, {**done, "nudged": True})  # a blocked agent is nudged on a later tick
 
     def _watch_blocked(self, now: float, managed: dict[str, str], agents: dict[str, Agent]) -> None:
         """One Event per episode of a Managed agent blocked past BLOCKED_ALERT_S, naming the dialog it shows."""
