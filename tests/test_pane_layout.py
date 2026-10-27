@@ -8,7 +8,8 @@ from herdr_orch.pane import App, scroll_top
 
 class FakeScreen:
     def __init__(self, height: int, width: int = 80) -> None:
-        self.size, self.cells = (height, width), {}
+        self.size = (height, width)
+        self.cells: dict[int, str] = {}
 
     def getmaxyx(self) -> tuple[int, int]:
         return self.size
