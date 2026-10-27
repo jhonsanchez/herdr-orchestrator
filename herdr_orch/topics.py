@@ -49,6 +49,7 @@ class Topic:
     base: str | None = None
     notify_command: list[str] = field(default_factory=list)
     notify: str = "none"  # stop-hook | herdr | none; a notify_command wins over it
+    deploy_check: list[str] = field(default_factory=list)  # exit 0 once a merge is deployed; empty: no gate
     heartbeat_window_min: int = 15
     stale_min: int = 40
     hung_min: int = 60

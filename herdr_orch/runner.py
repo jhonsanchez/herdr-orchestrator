@@ -9,16 +9,19 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import subprocess
 import time
 from typing import Callable, Protocol
 
 from herdr_orch.github import GitHub
-from herdr_orch.herdr import Herdr
+from herdr_orch.herdr import Agent, Herdr
 from herdr_orch.state import Event, TopicState
 from herdr_orch.topics import Topic
 from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations, pr_change
 
 GONE_GRACE_S = 60.0  # how long the Orchestrator may be missing before the runner gives up
+DEPLOY_POLL_SECONDS = 30.0
+DEPLOY_CHECK_TIMEOUT_S = 60
 READY = ("idle", "done")
 PR_POLL_SECONDS = 120.0  # gh is slower and rate-limited next to herdr: ask about PRs less often than a tick
 # Spinner and timer lines change every second without any progress.
@@ -54,6 +57,7 @@ class Runner:
         self.topic, self.state, self.herdr, self.watches, self.notify = topic, state, herdr, watches, notify
         self.say, self.github = say, github
         self._pr_polled_at = float("-inf")
+        self._deploy_polled_at = float("-inf")
         self.orchestrator = topic.orchestrator
         self.stale = StaleTracker(topic.stale_min, topic.hung_min)
         self._prev: dict[str, str] = {}
@@ -98,6 +102,7 @@ class Runner:
         self.stale.forget(names)
 
         self._follow_prs(now)
+        self._await_deploys(now, agents)
 
         self.watches.poll(now)
         for watch, line in self.watches.lines():
@@ -161,4 +166,32 @@ class Runner:
             text = pr_change(branch, pr)
             if pr is not None and text is not None:
                 self.state.append_event("pr", text, now)
-                self.state.set_pr(str(branch["branch"]), pr.number, pr.state, pr.checks, now)
+                self.state.set_pr(str(branch["branch"]), pr.number, pr.state, pr.checks, now, pr.merge_sha)
+
+    def _deployed(self, branch: dict[str, object]) -> bool:
+        env = {**os.environ, "HERDR_ORCH_MERGE_SHA": str(branch["merge_sha"]), "HERDR_ORCH_TOPIC": self.topic.name,
+               "HERDR_ORCH_REPO_ROOT": str(branch.get("repo_root") or ""), "HERDR_ORCH_BRANCH": str(branch["branch"])}
+        try:
+            done = subprocess.run([os.path.expanduser(a) for a in self.topic.deploy_check], env=env,
+                                  capture_output=True, timeout=DEPLOY_CHECK_TIMEOUT_S)
+        except (OSError, subprocess.TimeoutExpired):
+            return False  # a check that cannot run holds the gate
+        return done.returncode == 0
+
+    def _await_deploys(self, now: float, agents: dict[str, Agent]) -> None:
+        """Once a merged branch's deploy check passes, report it and prompt its agent to validate."""
+        if not self.topic.deploy_check or now - self._deploy_polled_at < DEPLOY_POLL_SECONDS:
+            return
+        self._deploy_polled_at = now
+        for branch in self.state.tracked_branches():
+            if branch.get("pr_state") != "merged" or not branch.get("merge_sha") or branch.get("deployed"):
+                continue
+            if not self._deployed(branch):
+                continue
+            name = str(branch["branch"])
+            self.state.mark_deployed(name)
+            sha = str(branch["merge_sha"])[:8]
+            self.state.append_event("deploy", f"{name} deployed at {sha}; its agent is prompted to validate", now)
+            if str(branch.get("agent")) in agents:
+                self.herdr.prompt(str(branch["agent"]),
+                                  f"[herdr-orchestrator] Your merge ({sha}) is deployed. Validate it now.")
