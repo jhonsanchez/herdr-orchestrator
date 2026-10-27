@@ -38,7 +38,10 @@ class DeployGateTest(unittest.TestCase):
         self.runner = Runner(self.topic, self.state, self.herdr, Quiet(), notify=lambda t, b: None, github=self.github)
 
     def prompts(self) -> list[object]:
-        return [c for c in self.herdr.of("prompt") if c[1] == "issue-1"]
+        return [c for c in self.herdr.of("prompt") if c[1] == "issue-1" and "deployed" in str(c[2])]
+
+    def told(self) -> list[str]:
+        return [str(c[2]) for c in self.herdr.of("prompt") if c[1] == "issue-1"]
 
     def merge(self) -> None:
         self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc123def456")
@@ -73,6 +76,34 @@ class DeployGateTest(unittest.TestCase):
         self.assertEqual(self.state.branch_record("issue-1")["merge_sha"], "abc123def456")  # type: ignore[index]
         self.assertEqual(len(self.prompts()), 1)
         self.assertNotIn("pr", [e.source for e in self.state.events_since(0)])
+
+    def test_deploy_prompt_says_what_to_validate_and_the_topic_instruction(self) -> None:
+        topic = Topic(name="waki", dir=self.root / "cfg", deploy_check=self.topic.deploy_check,
+                      validate="Run the plugin's tests.")
+        runner = Runner(topic, self.state, self.herdr, Quiet(), notify=lambda t, b: None, github=self.github)
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc123def456")
+        self.flag.touch()
+        runner.tick(1)
+        runner.tick(1 + DEPLOY_POLL_SECONDS)
+        (text,) = [t for t in self.told() if "deployed" in t]
+        self.assertIn("installed plugin is at abc123de", text)
+        self.assertIn("Run the plugin's tests.", text)
+        self.assertIn("herdr-orch validated waki --branch issue-1", text)
+        self.assertIn("say what you checked", text)
+
+    def test_green_merged_and_released_each_prompt_once_across_restarts(self) -> None:
+        self.github.prs["issue-1"] = PullRequest(20, "open", "passing")
+        self.runner.tick(1)
+        self.assertEqual([t for t in self.told() if "green" in t].__len__(), 1)
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc123def456")
+        self.runner.tick(1 + PR_POLL_SECONDS)
+        self.state.mark_validated("issue-1", 2)
+        again = Runner(self.topic, self.state, self.herdr, Quiet(), notify=lambda t, b: None, github=self.github)
+        again.tick(1 + 2 * PR_POLL_SECONDS)
+        again.tick(1 + 3 * PR_POLL_SECONDS)
+        kinds = [k for k in ("green", "is merged", "released") for t in self.told() if k in t]
+        self.assertEqual(kinds, ["green", "is merged", "released"])
+        self.assertIsNone(self.state.branch_record("issue-1"))
 
     def test_no_deploy_check_means_no_gate(self) -> None:
         plain = Runner(Topic(name="waki", dir=self.root / "cfg"), self.state, self.herdr, Quiet(),

@@ -17,6 +17,9 @@
 # HERDR_ORCH_BRANCH; ~ is expanded. Empty (the default): no gate. For this plugin's own repo:
 # deploy_check = ["~/.local/bin/herdr-orch", "deployed"]
 
+# What "validated" means for this Topic: sent to the agent in its deploy prompt.
+# validate = "Check the installed plugin runs the change."
+
 # Minutes before an unanswered Topic is Unattended, and before a silent agent is reported.
 # heartbeat_window_min = 15
 # stale_min = 40

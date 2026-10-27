@@ -138,6 +138,15 @@ class TopicState:
         if record is not None:
             self._write_branch({**record, "deployed": True})
 
+    def mark_told(self, branch: str, key: str) -> bool:
+        """Record that the agent was prompted for a transition; False when it already was (or no record)."""
+        record = self.branch_record(branch)
+        told = list(record.get("told") or []) if record else []  # type: ignore[call-overload]
+        if record is None or key in told:
+            return False
+        self._write_branch({**record, "told": [*told, key]})
+        return True
+
     def mark_validated(self, branch: str, now: float) -> bool:
         """The agent says its work is validated. False when the branch is not tracked."""
         record = self.branch_record(branch)

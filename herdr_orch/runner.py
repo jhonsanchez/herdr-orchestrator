@@ -175,6 +175,18 @@ class Runner:
             if pr is not None and text is not None:
                 self.state.append_event("pr", text, now)
                 self.state.set_pr(str(branch["branch"]), pr.number, pr.state, pr.checks, now, pr.merge_sha)
+            if pr is not None and pr.state == "open" and pr.checks == "passing":
+                self._tell(branch, "green", f"Your PR #{pr.number}'s checks are green. The Orchestrator merges it; "
+                                            "wait, and answer any review it sends.")
+            elif pr is not None and pr.state == "merged":
+                self._tell(branch, "merged", f"Your PR #{pr.number} is merged ({(pr.merge_sha or 'unknown')[:8]}). "
+                                             "Wait for the deploy prompt before validating.")
+
+    def _tell(self, branch: dict[str, object], key: str, text: str) -> None:
+        """Prompt a branch's agent once per transition; the branch record remembers it across restarts."""
+        agent = str(branch.get("agent"))
+        if agent in {a.name for a in self.herdr.agents()} and self.state.mark_told(str(branch["branch"]), key):
+            self.herdr.prompt(agent, f"[herdr-orchestrator] {text}")
 
     def _release_validated(self, now: float) -> None:
         """Release a validated branch whose PR is merged or closed. It never waits for the deploy
@@ -185,6 +197,8 @@ class Runner:
             if "validated_at" not in branch or branch.get("pr_state") not in ("merged", "closed"):
                 continue
             name = str(branch["branch"])
+            self._tell(branch, "released", f"{name} is validated and merged: your workspace is being released. "
+                                           "Stop; do not run anything more.")
             try:
                 release(self.state, self.herdr, self.github, name)
             except (RuntimeError, ValueError):
@@ -216,5 +230,7 @@ class Runner:
             sha = str(branch["merge_sha"])[:8]
             self.state.append_event("deploy", f"{name} deployed at {sha}; its agent is prompted to validate", now)
             if str(branch.get("agent")) in agents:
-                self.herdr.prompt(str(branch["agent"]),
-                                  f"[herdr-orchestrator] Your merge ({sha}) is deployed. Validate it now.")
+                text = (f"Your merge ({sha}) is deployed. Validate it now: check that the installed plugin is at "
+                        f"{sha}. {self.topic.validate} Run `herdr-orch validated {self.topic.name} --branch {name}` "
+                        "only after you have checked, and say what you checked.")
+                self.herdr.prompt(str(branch["agent"]), f"[herdr-orchestrator] {' '.join(text.split())}")
