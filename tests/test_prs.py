@@ -1,4 +1,5 @@
 import subprocess
+from dataclasses import replace
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,7 +9,7 @@ from unittest import mock
 from herdr_orch import seating
 from herdr_orch.attention import current_items
 from herdr_orch.attention import load
-from herdr_orch.github import PullRequest, checks_args, checks_of, parse_pr, pulls_args, rollup_of
+from herdr_orch.github import OpenPr, PullRequest, checks_args, checks_of, parse_pr, pulls_args, rollup_of
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch.runner import PR_POLL_SECONDS, Runner
 from herdr_orch.seating import release, seat, validated
@@ -26,12 +27,25 @@ class FakeGitHub:
         self.prs: dict[str, PullRequest | None] = {}
         self.down = False
         self.asked: list[str] = []
+        self.open: dict[str, list[OpenPr]] = {}  # repo root -> the open PRs its list call returns
+        self.detail: dict[int, OpenPr] = {}  # PR number -> what its own reads return
+        self.detail_reads: list[int] = []
 
     def pr_for_branch(self, repo_root: str, branch: str) -> PullRequest | None:
         self.asked.append(branch)
         if self.down:
             raise RuntimeError("rate limited")
         return self.prs.get(branch)
+
+    def open_pulls(self, repo_root: str) -> list[OpenPr]:
+        if self.down:
+            raise RuntimeError("rate limited")
+        return list(self.open.get(repo_root, []))
+
+    def pr_detail(self, repo_root: str, pr: OpenPr) -> OpenPr:
+        self.detail_reads.append(pr.number)
+        d = self.detail.get(pr.number)  # like the real one: the PR from the list, with the three read fields
+        return pr if d is None else replace(pr, mergeable_state=d.mergeable_state, checks=d.checks, review=d.review)
 
 
 def branch(agent: str = "issue-1", pr_state: str | None = "open", checks: str | None = "passing",

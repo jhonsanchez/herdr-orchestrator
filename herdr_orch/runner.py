@@ -16,9 +16,10 @@ from typing import Callable, Protocol
 from herdr_orch.attention import current_items
 from herdr_orch.github import GitHub
 from herdr_orch.herdr import Agent, AgentBlocked, AgentBusy, Herdr
+from herdr_orch.ledger import Ledger
 from herdr_orch.seating import release
 from herdr_orch.state import Event, TopicState
-from herdr_orch.topics import Topic
+from herdr_orch.topics import Topic, topic_for
 from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations, pr_change, resumed_items
 
 GONE_GRACE_S = 60.0  # how long the Orchestrator may be missing before the runner gives up
@@ -61,6 +62,8 @@ class Runner:
         self.topic, self.state, self.herdr, self.watches, self.notify = topic, state, herdr, watches, notify
         self.say, self.github = say, github
         self._pr_polled_at = float("-inf")
+        self._ledger_polled_at = float("-inf")
+        self.ledger = Ledger(state, github, bool(topic.deploy_check)) if github else None
         self._deploy_polled_at = float("-inf")
         self.orchestrator = topic.orchestrator
         self.stale = StaleTracker(topic.stale_min, topic.hung_min)
@@ -114,6 +117,7 @@ class Runner:
         self._watch_blocked(now, managed, agents)
 
         self._step("follow PRs", self._follow_prs, now)
+        self._step("ledger", self._sweep_ledger, now, agents)
         self._step("deploy gate", self._await_deploys, now, agents)
         self._step("release", self._release_validated, now)
 
@@ -220,6 +224,16 @@ class Runner:
             elif pr is not None and pr.state == "merged":
                 self._tell(branch, "merged", f"Your PR #{pr.number} is merged ({(pr.merge_sha or 'unknown')[:8]}). "
                                              "Wait for the deploy prompt before validating.")
+
+    def _sweep_ledger(self, now: float, agents: dict[str, Agent]) -> None:
+        """Recompute the branch ledger over every repo the Topic covers, and report PRs a merge just broke."""
+        if self.ledger is None or now - self._ledger_polled_at < PR_POLL_SECONDS:
+            return
+        self._ledger_polled_at = now
+        roots = {w.repo_root for w in self.herdr.workspaces() if w.repo_root and topic_for(w.repo_root, [self.topic])}
+        roots |= {str(b["repo_root"]) for b in self.state.tracked_branches() if b.get("repo_root")}
+        for text in self.ledger.sweep(sorted(roots), {n: a.status for n, a in agents.items()}, now):
+            self.state.append_event("ledger", text, now)
 
     def _watch_blocked(self, now: float, managed: dict[str, str], agents: dict[str, Agent]) -> None:
         """One Event per episode of a Managed agent blocked past BLOCKED_ALERT_S, naming the dialog it shows."""
