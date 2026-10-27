@@ -1,4 +1,8 @@
 #!/bin/sh
 # Resolve symlinks (the `link` action puts one in ~/.local/bin) to find the checkout.
 self=$(readlink -f "$0")
+# The Claude Code plugin cache holds a copy of this checkout that goes stale; defer to the herdr install.
+case "$self" in
+  */.claude*/plugins/*) exec "$HOME/.local/bin/herdr-orch" "$@" ;;
+esac
 exec env PYTHONPATH="$(dirname "$self")/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m herdr_orch.cli "$@"

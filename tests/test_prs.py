@@ -212,7 +212,7 @@ class ExistingBranchTest(unittest.TestCase):
 
     def test_seat_existing_bases_the_worktree_on_the_pushed_branch_and_says_to_pick_up_the_pr(self) -> None:
         self.push("issue-10")
-        seat(self.topic, self.state, self.herdr, "w3", "issue-10", home="/h", existing=True)
+        seat(self.topic, self.state, self.herdr, "w3", "issue-10", home="/h", existing=True, cli="/opt/herdr-orch")
         [call] = self.herdr.of("worktree_create")
         self.assertEqual(call[2], "issue-10")
         self.assertEqual(call[5], "origin/issue-10")
@@ -220,17 +220,17 @@ class ExistingBranchTest(unittest.TestCase):
 
     def test_seat_existing_refuses_a_branch_origin_does_not_have(self) -> None:
         with self.assertRaisesRegex(ValueError, "origin has no branch nope"):
-            seat(self.topic, self.state, self.herdr, "w3", "nope", home="/h", existing=True)
+            seat(self.topic, self.state, self.herdr, "w3", "nope", home="/h", existing=True, cli="/opt/herdr-orch")
         self.assertEqual(self.herdr.of("worktree_create"), [])
 
     def test_seating_records_the_branch_and_a_reseat_keeps_the_known_pr(self) -> None:
         self.push("issue-10")
         self.herdr.agent_list = []
-        seat(self.topic, self.state, self.herdr, "w3", "issue-10", home="/h", now=lambda: 5.0)
+        seat(self.topic, self.state, self.herdr, "w3", "issue-10", home="/h", now=lambda: 5.0, cli="/opt/herdr-orch")
         record = self.state.branch_record("issue-10")
         self.assertEqual((record["agent"], record["repo_root"]), ("issue-10", str(self.clone)))  # type: ignore[index]
         self.state.set_pr("issue-10", 20, "open", "passing", now=9)
-        seat(self.topic, self.state, self.herdr, "w3", "issue-10", home="/h", existing=True)
+        seat(self.topic, self.state, self.herdr, "w3", "issue-10", home="/h", existing=True, cli="/opt/herdr-orch")
         self.assertEqual(self.state.branch_record("issue-10")["pr"], 20)  # type: ignore[index]
 
 

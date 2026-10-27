@@ -239,7 +239,7 @@ def main(
             state.escalate(args.agent, pane, args.kind, args.question, args.option, now(), to="orchestrator")
         elif args.cmd == "seat":
             seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"),
-                          existing=args.existing, now=now)
+                          existing=args.existing, now=now, cli=CLI)
             print(f"{seated.name} {seated.pane_id}")
         elif args.cmd == "release":
             release(state, herdr, CliGitHub(), args.branch)
