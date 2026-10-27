@@ -91,7 +91,7 @@ class SeatingTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_seat_creates_worktree_exports_env_starts_registers_and_briefs(self) -> None:
-        r = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u")
+        r = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", cli="/opt/herdr-orch")
         self.assertEqual(self.herdr.of("worktree_create"), [
             ("worktree_create", "w3", "FALCON-12", "FALCON-12", "/home/u/.herdr/worktrees/zpc/FALCON-12", "origin/develop"),
         ])
@@ -101,17 +101,19 @@ class SeatingTest(unittest.TestCase):
         [prompt] = self.herdr.of("prompt")
         self.assertEqual(prompt[1], "falcon-12")
         self.assertIn(str(self.topic.brief_path), str(prompt[2]))
+        self.assertIn(f"run: HERDR_ORCH_CONFIG={self.topic.config_root} HERDR_ORCH_STATE={self.state.root} /opt/herdr-orch "
+                      "validated zebra --branch FALCON-12", str(prompt[2]))
 
     def test_seat_refuses_a_branch_or_workspace_a_live_agent_already_tracks(self) -> None:
-        r = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u")
+        r = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", cli="/opt/herdr-orch")
         self.herdr.agent_list.append(Agent("falcon-12", "idle", r.pane_id, "w9"))
         self.state.track_branch("FALCON-12", "falcon-12", "/home/u/projects/zebra/zpc", "w9", 1.0)
         ws = "w9"
         with self.assertRaisesRegex(ValueError, "FALCON-12 is already tracked"):
-            seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u")
+            seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", cli="/opt/herdr-orch")
         self.herdr.workspace_list.append(Workspace(str(ws), "FALCON-12", "/home/u/projects/zebra/zpc", "/wt"))
         with self.assertRaisesRegex(ValueError, "one branch in one workspace"):
-            seat(self.topic, self.state, self.herdr, workspace_id=str(ws), branch="FALCON-13", home="/home/u")
+            seat(self.topic, self.state, self.herdr, workspace_id=str(ws), branch="FALCON-13", home="/home/u", cli="/opt/herdr-orch")
         self.assertEqual(len(self.herdr.of("worktree_create")), 1)
         self.assertEqual(self.state.managed(), {r.pane_id: "falcon-12"})
 
@@ -155,7 +157,7 @@ class SeatingTest(unittest.TestCase):
 
     def test_seat_on_an_unknown_workspace_says_so(self) -> None:
         with self.assertRaisesRegex(ValueError, "w404"):
-            seat(self.topic, self.state, self.herdr, workspace_id="w404", branch="x", home="/home/u")
+            seat(self.topic, self.state, self.herdr, workspace_id="w404", branch="x", home="/home/u", cli="/opt/herdr-orch")
 
     def test_start_waits_for_a_startup_dialog_before_briefing(self) -> None:
         self.write_playbook()
@@ -175,7 +177,7 @@ class SeatingTest(unittest.TestCase):
 
     def test_seat_waits_for_a_startup_dialog_too(self) -> None:
         self.herdr.ready_after_start = False
-        seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: None)
+        seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: None, cli="/opt/herdr-orch")
         self.assertEqual(self.herdr.of("wait_ready"), [("wait_ready", "falcon-12")])
         self.assertEqual(len(self.herdr.of("prompt")), 1)
 
@@ -183,14 +185,14 @@ class SeatingTest(unittest.TestCase):
         repo = cloned_repo(Path(self.tmp.name), "main")
         self.herdr.workspace_list = [Workspace("w4", "x", str(repo))]
         topic = Topic(name="personal", dir=self.topic.dir)
-        seat(topic, self.state, self.herdr, workspace_id="w4", branch="issue-3", home="/home/u")
+        seat(topic, self.state, self.herdr, workspace_id="w4", branch="issue-3", home="/home/u", cli="/opt/herdr-orch")
         [call] = self.herdr.of("worktree_create")
         self.assertEqual(call[-1], "origin/main")
 
     def test_seat_waits_out_the_mcp_screen_before_briefing(self) -> None:
         self.herdr.screens["w9:p1"] = [MCP_SCREEN, MCP_SCREEN, PROMPT]
         said: list[str] = []
-        seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=said.append)
+        seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=said.append, cli="/opt/herdr-orch")
         self.assertEqual(said, ["falcon-12 is waiting at a startup screen (enable this project's MCP servers): answer it in its pane."])
         self.assertEqual(len(self.herdr.of("read_screen")), 3)
         kinds = [c[0] for c in self.herdr.calls]
@@ -200,7 +202,7 @@ class SeatingTest(unittest.TestCase):
         self.herdr.screens["w9:p1"] = [MCP_SCREEN]
         with mock.patch.object(seating, "DIALOG_TIMEOUT_SECONDS", 0.01):
             with self.assertRaises(TimeoutError):
-                seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: None)
+                seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: None, cli="/opt/herdr-orch")
         self.assertEqual(self.herdr.of("prompt"), [])
 
     def test_start_waits_out_the_mcp_screen_too(self) -> None:
@@ -210,7 +212,7 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual(len(self.herdr.of("prompt")), 1)
 
     def test_a_clean_start_reads_the_screen_once_and_briefs(self) -> None:
-        seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: self.fail(m))
+        seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", say=lambda m: self.fail(m), cli="/opt/herdr-orch")
         self.assertEqual(len(self.herdr.of("read_screen")), 1)
         self.assertEqual(len(self.herdr.of("prompt")), 1)
 

@@ -112,8 +112,11 @@ def seat(
     say: Callable[[str], None] = _stderr,
     existing: bool = False,
     now: Callable[[], float] = time.time,
+    *,
+    cli: str,
 ) -> Seated:
-    """Seat an agent on a branch. `existing` seats it on a branch already pushed to origin,
+    """Seat an agent on a branch. `cli` is the herdr-orch the agent is told to run: an absolute path,
+    since the agent's PATH may resolve a bare herdr-orch to a stale copy (#60). `existing` seats it on a branch already pushed to origin,
     so a PR left without an agent gets an owner again."""
     home = home or str(Path.home())
     ws = next((w for w in herdr.workspaces() if w.workspace_id == workspace_id), None)
@@ -143,10 +146,11 @@ def seat(
         raise TimeoutError(f"{name} never got past its startup dialog; brief it by hand")
     resume = (f" {branch} already has work pushed, and may have an open PR: start from the PR for the branch (gh api repos/{{owner}}/{{repo}}/pulls), "
               "answer any review feedback and fix any failing check on the same branch.") if existing else ""
+    cmd = _orchestrator_cmd(cli, topic, state)
     herdr.prompt(
         name,
         f"You are seated on {branch} for topic {topic.name}. Read your brief at {topic.brief_path} "
-        f"and follow it, then start the work. When your work is validated, run: herdr-orch validated {topic.name} "
+        f"and follow it, then start the work. When your work is validated, run: {cmd} validated {topic.name} "
         f"--branch {branch}.{resume}",
     )
     return Seated(name, pane)
