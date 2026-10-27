@@ -129,9 +129,12 @@ class TopicState:
     def set_pr(self, branch: str, pr: int | None, pr_state: str | None, checks: str | None, now: float,
                merge_sha: str | None = None) -> None:
         record = self.branch_record(branch)
-        if record is not None:
-            self._write_branch({**record, "pr": pr, "pr_state": pr_state, "checks": checks, "pr_since": now,
-                                "merge_sha": merge_sha or record.get("merge_sha")})
+        if record is None:
+            return
+        if record.get("pr") not in (None, pr):  # the branch's newest PR: its cycle starts over
+            record = {k: v for k, v in record.items() if k not in ("told", "deployed", "validated_at", "merge_sha")}
+        self._write_branch({**record, "pr": pr, "pr_state": pr_state, "checks": checks, "pr_since": now,
+                            "merge_sha": merge_sha or record.get("merge_sha")})
 
     def mark_deployed(self, branch: str) -> None:
         record = self.branch_record(branch)
