@@ -263,6 +263,21 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(self.herdr.of("worktree_remove"), [("worktree_remove", "w9")])
         self.assertIsNone(self.state.branch_record("issue-1"))
 
+    def test_a_workspace_already_gone_still_releases_and_stops_tracking(self) -> None:
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing")
+        self.herdr.gone_workspaces.add("w9")
+        release(self.state, self.herdr, self.github, "issue-1")
+        self.assertIsNone(self.state.branch_record("issue-1"))
+
+    def test_branches_sharing_a_workspace_keep_it_until_the_last_is_released(self) -> None:
+        self.state.track_branch("issue-2", "issue-1", "/r", "w9", now=0)
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing")
+        self.github.prs["issue-2"] = PullRequest(21, "merged", "passing")
+        release(self.state, self.herdr, self.github, "issue-1")
+        self.assertEqual(self.herdr.of("worktree_remove"), [])
+        release(self.state, self.herdr, self.github, "issue-2")
+        self.assertEqual(self.herdr.of("worktree_remove"), [("worktree_remove", "w9")])
+
     def test_release_gives_back_the_agents_registry_entry(self) -> None:
         self.state.take("p1", "issue-1")
         self.state.take("p2", "issue-2")

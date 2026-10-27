@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from herdr_orch.deploy import compare_args, holds, installed_checkout, is_deployed, runner_on
 from herdr_orch.github import PullRequest, parse_pr
@@ -233,6 +234,24 @@ class AutoReleaseTest(unittest.TestCase):
         self.assertEqual(self.herdr.of("worktree_remove"), [("worktree_remove", "w9")])
         self.assertEqual(self.state.managed(), {})
         self.assertIn("released", [e.source for e in self.state.events_since(0)])
+
+    def test_a_release_that_raises_does_not_starve_the_tick_and_is_followed_up_once(self) -> None:
+        notes: list[tuple[str, str]] = []
+        self.runner.notify = lambda t, b: notes.append((t, b))
+        self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc")
+        self.state.mark_validated("issue-1", 0)
+        boom = subprocess.CalledProcessError(1, ["herdr"], output='{"error":{"code":"internal"}}')
+        with mock.patch.object(self.herdr, "worktree_remove", side_effect=boom):
+            self.runner.tick(1)
+            self.runner.tick(2)
+        self.assertEqual(self.runner.ticks, 2)  # the tick got to the end, both times
+        self.assertIsNotNone(self.state.branch_record("issue-1"))
+        self.assertEqual(len([n for n in notes if "issue-1 needs a follow-up" in n[0]]), 1)
+
+    def test_a_failing_step_does_not_stop_the_ones_after_it(self) -> None:
+        with mock.patch.object(self.runner, "_follow_prs", side_effect=OSError("boom")):
+            self.runner.tick(1)
+        self.assertEqual(self.runner.ticks, 1)
 
     def test_not_validated_or_github_down_keeps_it(self) -> None:
         self.github.prs["issue-1"] = PullRequest(20, "merged", "passing", merge_sha="abc")

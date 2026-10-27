@@ -225,8 +225,17 @@ def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str) -> Non
         pr = github.pr_for_branch(str(record["repo_root"]), branch)  # RuntimeError if GitHub cannot say: keep it
         if pr is not None and pr.state == "open":
             raise RuntimeError(f"PR #{pr.number} for {branch} is still open: close or merge it first")
-    if record.get("workspace_id"):
-        herdr.worktree_remove(str(record["workspace_id"]))
+    workspace = record.get("workspace_id")
+    shared = any(r["branch"] != branch and r.get("workspace_id") == workspace for r in state.tracked_branches())
+    # Two branches may share one workspace (one agent did both): the last one out removes it.
+    gone = bool(workspace) and not shared and not herdr.worktree_remove(str(workspace))
+    if gone and record.get("repo_root"):
+        # The workspace was already removed (by a sibling's release): only the checkout may be left.
+        repo = Path(str(record["repo_root"]))
+        path = Path.home() / ".herdr" / "worktrees" / repo.name / branch
+        if path.exists():
+            subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(path)],
+                           capture_output=True, text=True)
     for pane, agent in state.managed().items():
         if agent == record.get("agent"):
             state.give_back(pane)

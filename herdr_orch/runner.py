@@ -69,6 +69,7 @@ class Runner:
         self._delivering = False
         self._alerted = False
         self._chased: set[tuple[str, float]] = set()
+        self._failures: dict[str, str] = {}
         self._missing_since: float | None = None
         self.ticks = 0
         self.done = False  # set once the Orchestrator has been gone a whole grace period
@@ -102,9 +103,9 @@ class Runner:
                     self.state.append_event("stale", stale, now)
         self.stale.forget(names)
 
-        self._follow_prs(now)
-        self._await_deploys(now, agents)
-        self._release_validated(now)
+        self._step("follow PRs", self._follow_prs, now)
+        self._step("deploy gate", self._await_deploys, now, agents)
+        self._step("release", self._release_validated, now)
 
         self.watches.poll(now)
         for watch, line in self.watches.lines():
@@ -152,6 +153,22 @@ class Runner:
                 self.herdr.attention_open(orch.workspace_id, orch.pane_id)
         self.ticks += 1
         self.state.record_runner(os.getpid(), now, self.ticks)
+
+    def _step(self, what: str, step: Callable[..., None], *args: object) -> None:
+        """One failing step must not starve the rest of the tick: log it once and carry on."""
+        try:
+            step(*args)
+        except Exception as e:  # noqa: BLE001 - the tick must outlive any one step
+            self._failed(what, what, e)
+
+    def _failed(self, key: str, what: str, error: Exception) -> bool:
+        """Log a failure the first time it appears; True when it was new."""
+        text = f"{what} failed: {type(error).__name__}: {error}"
+        if self._failures.get(key) == text:
+            return False
+        self._failures[key] = text
+        self.say(text)
+        return True
 
     def _follow_prs(self, now: float) -> None:
         """Report each tracked branch's PR changing, until the PR is merged or closed. A merged branch
@@ -203,6 +220,12 @@ class Runner:
                 release(self.state, self.herdr, self.github, name)
             except (RuntimeError, ValueError):
                 continue  # GitHub cannot say, or the PR is open again: keep it, try next tick
+            except Exception as e:  # noqa: BLE001 - e.g. herdr failing: keep the record, tell the user once
+                if self._failed(f"release {name}", f"release of {name}", e):
+                    self.notify(f"Topic {self.topic.name}: {name} needs a follow-up",
+                                f"releasing {name} keeps failing: {e}")
+                continue
+            self._failures.pop(f"release {name}", None)
             self.state.append_event("released", f"{name} released: validated and its PR is {branch['pr_state']}", now)
 
     def _deployed(self, branch: dict[str, object]) -> bool:
