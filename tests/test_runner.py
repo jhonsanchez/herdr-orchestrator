@@ -154,7 +154,7 @@ class RunnerTest(unittest.TestCase):
         self.herdr.agent_list = [Agent("orch-waki", "idle", "w5:p1", "w5")]
         self.runner.tick(0)
         self.runner.tick(15)
-        self.assertEqual(self.herdr.of("attention_open"), [("attention_open", "w5", "w5:p1")])
+        self.assertEqual(self.herdr.of("attention_open"), [("attention_open", "w5", "w5:p1", "waki")])
 
     def test_every_tick_records_the_runner_alive(self) -> None:
         self.herdr.agent_list = [Agent("orch-waki", "idle", "w5:p1", "w5")]

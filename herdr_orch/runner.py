@@ -150,7 +150,7 @@ class Runner:
         else:
             self._missing_since = None
             if not self.herdr.has_attention(orch.workspace_id):
-                self.herdr.attention_open(orch.workspace_id, orch.pane_id)
+                self.herdr.attention_open(orch.workspace_id, orch.pane_id, self.topic.name)
         self.ticks += 1
         self.state.record_runner(os.getpid(), now, self.ticks)
 

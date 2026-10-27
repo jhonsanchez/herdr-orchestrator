@@ -80,8 +80,8 @@ class FakeHerdr:
     def has_attention(self, workspace_id: str) -> bool:
         return workspace_id in self.attention
 
-    def attention_open(self, workspace_id: str, target_pane: str) -> None:
-        self.calls.append(("attention_open", workspace_id, target_pane))
+    def attention_open(self, workspace_id: str, target_pane: str, topic: str | None = None) -> None:
+        self.calls.append(("attention_open", workspace_id, target_pane, topic))
         self.attention.add(workspace_id)
 
     def plugin_config_dir(self) -> str | None:

@@ -201,7 +201,7 @@ def start(
     started = herdr.agent_start(name, root_pane, ["--model", model] if model else [])
     # The runner comes second: before the Orchestrator exists, it would report the Topic Unattended.
     spawn(cli, topic, state)
-    herdr.attention_open(workspace_id, root_pane)
+    herdr.attention_open(workspace_id, root_pane, topic.name)
     return _brief(topic, state, herdr, cmd, root_pane, started, say)
 
 

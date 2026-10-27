@@ -84,6 +84,7 @@ class View:
     groups: list[Group]
     banners: list[str]
     status: list[str] = field(default_factory=list)  # liveness lines, shown dim
+    scope: str | None = None  # the one Topic whose rows are shown; None: every Topic
 
     def rows(self) -> list[Row]:
         return [r for g in self.groups for r in g.rows]
@@ -127,9 +128,12 @@ def build_view(
     now: float,
     hidden: set[tuple[str, str]] = frozenset(),  # type: ignore[assignment]
     followups: Sequence[Followup] = (),
+    scope: str | None = None,
 ) -> View:
     """Rows grouped by workspace, then agent, oldest first. `hidden` holds (pane, status)
-    pairs the user skipped; such a row returns once that agent's status changes."""
+    pairs the user skipped; such a row returns once that agent's status changes. With `scope`,
+    only that Topic's rows and liveness show; every Topic's banners stay, as an Unattended Topic
+    elsewhere still needs you."""
     workspace_of = {a.pane_id: a.workspace_id for a in agents}
     label_of = {w.workspace_id: w.label or w.workspace_id for w in workspaces}
 
@@ -147,12 +151,14 @@ def build_view(
             f"{f.agent} {f.reason}: needs a follow-up (PR, report or Inbox item)"
         rows.append(Row(agent=f.agent, pane=f.pane, kind="followup", topic=f.topic, created_at=f.opened_at, options=[],
                         text=text))
-    for a in agents:
+    for a in agents if scope is None else ():  # an agent no Orchestrator manages belongs to no Topic
         if a.pane_id not in managed and a.status in OPEN_ONLY and (a.pane_id, a.status) not in hidden:
             name = a.name or a.pane_id
             rows.append(Row(agent=name, pane=a.pane_id, kind=a.status, text=f"{name} is {a.status}",
                             options=[], created_at=None))
 
+    if scope is not None:
+        rows = [r for r in rows if r.topic == scope]
     oldest: dict[str, float] = {}
     for r in rows:
         oldest[r.pane] = min(oldest.get(r.pane, float("inf")), _when(r))
@@ -163,11 +169,12 @@ def build_view(
     banners += [b for b in (_followup_banner(f, now) for f in followups) if b]
     lines = [_runner_line(t, now) for t in topics]
     banners += [b for b, _ in lines if b]
-    return View(list(groups.values()), banners, [s for _, s in lines if s])
+    shown = [s for t, (_, s) in zip(topics, lines) if s and scope in (None, t.name)]
+    return View(list(groups.values()), banners, shown, scope)
 
 
 def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
-         hidden: set[tuple[str, str]] = frozenset()) -> View:  # type: ignore[assignment]
+         hidden: set[tuple[str, str]] = frozenset(), scope: str | None = None) -> View:  # type: ignore[assignment]
     """Everything the pane shows, read from every Topic's state and herdr."""
     agents, workspaces = herdr.agents(), herdr.workspaces()
     present = {a.name for a in agents if a.name}
@@ -193,7 +200,7 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
         if waiting or registered or topic.orchestrator in present:
             statuses.append(TopicStatus(topic.name, topic.orchestrator in present, heartbeat,
                                         pending_since, topic.heartbeat_window_min, state.runner_status()))
-    return build_view(items, agents, workspaces, managed, statuses, now, hidden, followups)
+    return build_view(items, agents, workspaces, managed, statuses, now, hidden, followups, scope)
 
 
 def answer(states: Path, row: Row, text: str, herdr: Herdr, orchestrator: str | None = None) -> str:

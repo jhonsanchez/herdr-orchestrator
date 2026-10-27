@@ -131,7 +131,7 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual(self.spawned, [("/opt/plug/bin/herdr-orch", "zebra")])
         [(_, name, pane, args)] = self.herdr.of("agent_start")
         self.assertEqual(name, "orch-zebra")
-        self.assertEqual(self.herdr.of("attention_open"), [("attention_open", "w51", pane)])
+        self.assertEqual(self.herdr.of("attention_open"), [("attention_open", "w51", pane, "zebra")])
         [prompt] = self.herdr.of("prompt")
         self.assertIn(str(self.topic.playbook_path), str(prompt[2]))
         self.assertIn(f"HERDR_ORCH_STATE={self.state.dir.parent.parent} /opt/plug/bin/herdr-orch heartbeat zebra", str(prompt[2]))
