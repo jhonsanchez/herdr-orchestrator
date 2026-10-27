@@ -5,7 +5,7 @@ import time
 import unittest
 from pathlib import Path
 
-from herdr_orch.deploy import holds, installed_checkout, is_deployed, runner_on
+from herdr_orch.deploy import compare_args, holds, installed_checkout, is_deployed, runner_on
 from herdr_orch.github import PullRequest, parse_pr
 from herdr_orch.herdr import Agent
 from herdr_orch.runner import DEPLOY_POLL_SECONDS, PR_POLL_SECONDS, Runner
@@ -96,6 +96,49 @@ class PluginDeployTest(unittest.TestCase):
         self.assertIsNone(installed_checkout(self.plugins / "nowhere"))
         self.assertTrue(holds(self.checkout, self.sha))
         self.assertFalse(holds(self.checkout, "0" * 40))
+
+    def shallow_checkout(self) -> tuple[Path, str]:
+        """A depth-1 clone of a three-commit repo, as herdr installs the plugin; returns it and the oldest sha."""
+        origin = Path(self.tmp.name) / "origin"
+        git = ["git", "-C", str(origin), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(["git", "init", "-q", str(origin)], check=True)
+        for n in "abc":
+            subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", n], check=True)
+        old = subprocess.run([*git, "rev-parse", "HEAD~2"], capture_output=True, text=True, check=True).stdout.strip()
+        clone = Path(self.tmp.name) / "shallow"
+        subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{origin}", str(clone)], check=True)
+        return clone, old
+
+    def fake_gh(self, status: str, code: int = 0) -> Path:
+        """A gh on PATH that answers the compare endpoint like --jq .status would."""
+        bindir = Path(self.tmp.name) / "bin"
+        bindir.mkdir(exist_ok=True)
+        gh = bindir / "gh"
+        gh.write_text(f"#!/bin/sh\ncase \"$*\" in *compare/*...*) echo {status}; exit {code};; esac\nexit 1\n")
+        gh.chmod(0o755)
+        self.addCleanup(os.environ.__setitem__, "PATH", os.environ["PATH"])
+        os.environ["PATH"] = f"{bindir}:{os.environ['PATH']}"
+        return gh
+
+    def test_a_shallow_clone_asks_github_about_older_merges(self) -> None:
+        clone, old = self.shallow_checkout()
+        self.assertEqual(subprocess.run(["git", "-C", str(clone), "rev-parse", "--is-shallow-repository"],
+                                        capture_output=True, text=True).stdout.strip(), "true")
+        self.assertEqual(subprocess.run(["git", "-C", str(clone), "merge-base", "--is-ancestor", old, "HEAD"],
+                                        capture_output=True).returncode, 128)
+        head = subprocess.run(["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        self.assertTrue(holds(clone, head))  # HEAD itself needs no GitHub
+        self.fake_gh("ahead")
+        self.assertTrue(holds(clone, old))
+        self.fake_gh("identical")
+        self.assertTrue(holds(clone, old))
+
+    def test_a_sha_that_is_not_behind_head_or_that_github_cannot_judge_is_not_held(self) -> None:
+        clone, old = self.shallow_checkout()
+        for status, code in (("behind", 0), ("diverged", 0), ("ahead", 1)):
+            self.fake_gh(status, code)
+            self.assertFalse(holds(clone, old), status)
+        self.assertEqual(compare_args("a", "b")[4], "repos/{owner}/{repo}/compare/a...b")
 
     def test_the_older_layout_without_a_version_folder_is_still_found(self) -> None:
         old = self.plugins / "github" / "jhonsanchez.orchestrator-1"
