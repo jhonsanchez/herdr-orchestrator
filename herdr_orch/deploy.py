@@ -24,14 +24,24 @@ def holds(checkout: Path, sha: str) -> bool:
         return False
 
 
-def runner_on(checkout: Path, pid: int) -> bool:
-    """Whether a process was started from the checkout: bin/herdr-orch puts it first on PYTHONPATH."""
+def _environ(pid: int) -> str:
+    """A process's environment as text: /proc on Linux, `ps e` where there is none (macOS)."""
     try:
-        environ = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+        return Path(f"/proc/{pid}/environ").read_bytes().replace(b"\0", b"\n").decode(errors="replace")
     except OSError:
-        return False
-    want = f"PYTHONPATH={checkout}/".encode()
-    return any(e.startswith(want) for e in environ)
+        pass
+    try:
+        out = subprocess.run(["ps", "eww", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return out.stdout.replace(" ", "\n")
+
+
+def runner_on(checkout: Path, pid: int) -> bool:
+    """Whether a process was started from the checkout: bin/herdr-orch puts it first on PYTHONPATH
+    (as a resolved path, so compare the resolved checkout too)."""
+    environ = _environ(pid)
+    return any(f"PYTHONPATH={c}/" in environ for c in {str(checkout), str(checkout.resolve())})
 
 
 def is_deployed(sha: str, plugins_dir: Path, state: TopicState) -> bool:
