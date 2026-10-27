@@ -39,7 +39,7 @@ class Herdr(Protocol):
     def workspaces(self) -> list[Workspace]: ...
     def workspace_create(self, cwd: str, label: str) -> tuple[str, str]: ...
     def worktree_create(self, workspace_id: str, branch: str, label: str, path: str, base: str | None) -> str: ...
-    def worktree_remove(self, workspace_id: str) -> None: ...
+    def worktree_remove(self, workspace_id: str) -> bool: ...
     def pane_split(self, pane_id: str, cwd: str) -> str: ...
     def pane_run(self, pane_id: str, command: str) -> None: ...
     def agent_start(self, name: str, pane_id: str, args: list[str]) -> bool: ...
@@ -163,8 +163,15 @@ class CliHerdr:
             args += ["--base", base]
         return find_key(self._json(*args), "pane_id") or ""
 
-    def worktree_remove(self, workspace_id: str) -> None:
-        self._json("worktree", "remove", "--workspace", workspace_id)
+    def worktree_remove(self, workspace_id: str) -> bool:
+        """False when herdr no longer has the workspace (workspace_not_found): it is already gone."""
+        try:
+            self._json("worktree", "remove", "--workspace", workspace_id)
+        except subprocess.CalledProcessError as e:
+            if "workspace_not_found" in f"{e.stdout or ''}{e.stderr or ''}":
+                return False
+            raise
+        return True
 
     def pane_split(self, pane_id: str, cwd: str) -> str:
         r = self._json("pane", "split", "--pane", pane_id, "--direction", "down", "--cwd", cwd, "--no-focus")

@@ -9,6 +9,7 @@ class FakeHerdr:
     def __init__(self) -> None:
         self.agent_list: list[Agent] = []
         self.panes: dict[str, str] = {}
+        self.gone_workspaces: set[str] = set()  # workspaces herdr answers workspace_not_found for
         self.workspace_list: list[Workspace] = []
         self.calls: list[tuple[object, ...]] = []
         self._n = 0
@@ -52,8 +53,9 @@ class FakeHerdr:
         self.calls.append(("worktree_create", workspace_id, branch, label, path, base))
         return self._pane()
 
-    def worktree_remove(self, workspace_id: str) -> None:
+    def worktree_remove(self, workspace_id: str) -> bool:
         self.calls.append(("worktree_remove", workspace_id))
+        return workspace_id not in self.gone_workspaces
 
     def pane_split(self, pane_id: str, cwd: str) -> str:
         self.calls.append(("pane_split", pane_id, cwd))
