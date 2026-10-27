@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from herdr_orch.attention import current_items
 from herdr_orch.herdr import Agent
 from herdr_orch.runner import Runner
 from herdr_orch.state import TopicState
@@ -181,6 +182,18 @@ class RunnerTest(unittest.TestCase):
         self.assertIsNotNone(self.state.runner_status())
         self.state.clear_runner(111)
         self.assertIsNone(self.state.runner_status())
+
+    def test_a_question_resolves_when_its_agent_starts_a_turn_again(self) -> None:
+        self.state.take("w1:waki-1", "waki-1")
+        self.state.escalate("waki-1", "w1:waki-1", "question", "which?", [], 1.0)
+        self.state.escalate("waki-1", "w1:waki-1", "decision", "merge?", [], 1.0, to="orchestrator")
+        self.agents(**{"waki-1": "blocked"})
+        self.runner.tick(10.0)
+        self.assertEqual(len(current_items(self.state.inbox_lines())), 2)
+        self.agents(**{"waki-1": "working"})
+        self.runner.tick(20.0)
+        [left] = current_items(self.state.inbox_lines())
+        self.assertEqual(left["to"], "orchestrator")
 
 
 if __name__ == "__main__":

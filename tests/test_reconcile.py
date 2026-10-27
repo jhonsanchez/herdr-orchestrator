@@ -7,6 +7,7 @@ from herdr_orch.herdr import Agent, Workspace
 from herdr_orch.reconcile import Reconciled, reconcile
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
+from herdr_orch.watches_core import open_obligations
 from tests.fakes import FakeHerdr
 
 REPO = "/home/u/projects/personal/x"
@@ -101,3 +102,17 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual(self.run_it().compacted, 2)
         self.assertEqual([(i["id"], i["status"]) for i in self.state.inbox_lines()], [("a", "resolved"), ("b", "open")])
         self.assertEqual(self.run_it().compacted, 0)
+
+    def test_rows_of_vanished_agents_are_swept_and_named_but_a_tracked_branch_keeps_its_rows(self) -> None:
+        for agent in ("issue-10", "issue-30", "issue-31"):
+            self.state.append_event("agents", f"{agent} gone", 5.0)
+        self.state.escalate("issue-30", "w9:p1", "question", "which?", [], 6.0)
+        self.state.track_branch("issue-31", "issue-31", REPO, "w31", 5.0)
+        result = self.run_it()
+        self.assertEqual(result.swept, ["issue-10", "issue-30"])
+        self.assertIn("swept rows of 2 vanished agent(s) (issue-10, issue-30)", result.summary())
+        self.assertEqual([o.agent for o in open_obligations(self.state.events_since(float("-inf")), [], {}, set())],
+                         ["issue-31"])
+        self.assertEqual([i for i in self.state.inbox_lines() if i["status"] == "open"], [])
+        self.assertEqual(self.run_it().swept, [])
+

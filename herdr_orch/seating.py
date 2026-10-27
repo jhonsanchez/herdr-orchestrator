@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from herdr_orch.attention import current_items
 from herdr_orch.github import GitHub
 from herdr_orch.herdr import Herdr
 from herdr_orch.state import TopicState
@@ -231,7 +232,7 @@ def _brief(topic: Topic, state: TopicState, herdr: Herdr, cmd: str, pane: str, s
     return True
 
 
-def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str) -> None:
+def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str, now: float | None = None) -> None:
     """Clean up a branch: workspace, worktree (which ends its agent), Registry entry and tracking,
     once its PR is merged or closed. An open PR keeps them: its agent, or its next one, still
     needs the checkout."""
@@ -257,6 +258,12 @@ def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str) -> Non
         if agent == record.get("agent"):
             state.give_back(pane)
     state.untrack(branch)
+    if record.get("agent"):  # its follow-ups and open questions go with it
+        agent = str(record["agent"])
+        state.append_event("released", f"{agent} released", time.time() if now is None else now)
+        for item in current_items(state.inbox_lines()):
+            if item.get("agent") == agent:
+                state.resolve(str(item["id"]), "dismissed")
 
 
 def validated(state: TopicState, branch: str, now: float, evidence: str) -> None:

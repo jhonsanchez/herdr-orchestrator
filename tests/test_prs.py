@@ -6,6 +6,7 @@ from typing import Any
 from unittest import mock
 
 from herdr_orch import seating
+from herdr_orch.attention import current_items
 from herdr_orch.attention import load
 from herdr_orch.github import PullRequest, checks_args, checks_of, parse_pr, pulls_args, rollup_of
 from herdr_orch.herdr import Agent, Workspace
@@ -331,6 +332,14 @@ class ReleaseTest(unittest.TestCase):
     def test_validated_on_an_untracked_branch_is_refused(self) -> None:
         with self.assertRaisesRegex(ValueError, "not tracked"):
             validated(self.state, "nope", 1.0, "ran it")
+
+    def test_release_closes_the_agents_followups_and_open_questions(self) -> None:
+        self.github.prs["issue-1"] = PullRequest(20, "closed", "none")
+        self.state.append_event("agents", "issue-1 gone", 5.0)
+        self.state.escalate("issue-1", "w9:p1", "question", "which?", [], 6.0)
+        release(self.state, self.herdr, self.github, "issue-1", now=10.0)
+        self.assertEqual(open_obligations(self.state.events_since(float("-inf")), [], {}, set()), [])
+        self.assertEqual(current_items(self.state.inbox_lines()), [])
 
 
 if __name__ == "__main__":
