@@ -39,6 +39,10 @@ class App:
         self.option = 0
         self.message = ""
         self.hidden: set[tuple[str, str]] = set()  # skipped open-only rows, as (pane, status)
+        self.hits: list[tuple[int, int, int, str, int]] = []  # drawn click targets: (y, x0, x1, kind, arg)
+        self.detail_y = 0  # first screen row of the detail pane
+        self.detail_off = 0
+        self.detail_for = -1
 
     def refresh(self) -> None:
         try:
@@ -59,6 +63,7 @@ class App:
         scr.erase()
         height, width = scr.getmaxyx()
         y = 0
+        self.hits = []
 
         def put(text: str, attr: int = 0) -> None:
             nonlocal y
@@ -67,7 +72,10 @@ class App:
                 y += 1
 
         header = f"Topic {self.scope}" if self.scope else "All Topics"
-        put(header + ("  ([a] toggle)" if self.home_scope else ""), curses.A_BOLD)
+        label = header + ("  ([a] toggle)" if self.home_scope else "")
+        if self.home_scope:
+            self.hits.append((0, 0, len(label), "key", ord("a")))
+        put(label, curses.A_BOLD)
         for banner in self.view.banners:
             put(f"⚠ {banner}", curses.A_BOLD | curses.color_pair(1))
         for line in self.view.status:
@@ -83,6 +91,8 @@ class App:
                 marker = "❯" if index == self.selected else " "
                 attr = curses.A_REVERSE if index == self.selected and not self.choosing else 0
                 guess = " (guess)" if row.guess else ""
+                if y < height - 1:
+                    self.hits.append((y, 0, width, "row", index))
                 put(f" {marker} {ICONS.get(row.kind, '·')} {row.agent:<16} {row.kind:<10} {_age(row, now):>4}  {row.text}{guess}", attr)
                 index += 1
 
@@ -91,21 +101,37 @@ class App:
         if y < height - 1:
             scr.hline(y, 0, curses.ACS_HLINE, width)
             y += 1
+        self.detail_y = y
         chosen = self.current()
         if chosen is not None:
             row = chosen
-            for line in textwrap.wrap(f"{row.agent} · {row.text}", width - 2) or [""]:
-                put(line, curses.A_BOLD)
+            lines: list[tuple[str, int, int | None]] = [
+                (line, curses.A_BOLD, None) for line in textwrap.wrap(f"{row.agent} · {row.text}", width - 2) or [""]]
             for i, choice in enumerate(row.choices):
                 marker = "❯" if self.choosing and i == self.option else " "
                 attr = curses.A_REVERSE if self.choosing and i == self.option else 0
-                put(f" {marker} {i + 1}. {choice}", attr)
+                lines.append((f" {marker} {i + 1}. {choice}", attr, i))
             if not row.answerable:
-                put("   Answer it in the agent's own pane: press o.", curses.A_DIM)
-        footer = "[enter] answer  [o] open pane  [s] skip  [r] refresh  [q] quit"
-        if self.choosing:
-            footer = "[↑↓] choose  [enter] send  [esc] back"
-        scr.addnstr(height - 1, 0, (self.message or footer)[: width - 1], width - 1, curses.A_DIM)
+                lines.append(("   Answer it in the agent's own pane: press o.", curses.A_DIM, None))
+            if self.detail_for != self.selected:
+                self.detail_for, self.detail_off = self.selected, 0
+            self.detail_off = max(min(self.detail_off, len(lines) - (height - 1 - y)), 0)
+            for text, attr, option in lines[self.detail_off:]:
+                if option is not None and y < height - 1:
+                    self.hits.append((y, 0, width, "option", option))
+                put(text, attr)
+        buttons = [("[↑↓] choose", None), ("[enter] send", 10), ("[esc] back", 27)] if self.choosing else [
+            ("[enter] answer", 10), ("[o] open pane", ord("o")), ("[s] skip", ord("s")),
+            ("[r] refresh", ord("r")), ("[q] quit", ord("q"))]
+        if self.message:
+            scr.addnstr(height - 1, 0, self.message[: width - 1], width - 1, curses.A_DIM)
+        else:
+            x = 0
+            for text, key in buttons:
+                if key is not None:
+                    self.hits.append((height - 1, x, x + len(text), "key", key))
+                x += len(text) + 2
+            scr.addnstr(height - 1, 0, "  ".join(t for t, _ in buttons)[: width - 1], width - 1, curses.A_DIM)
         scr.refresh()
 
     def ask_text(self, scr: curses.window, prompt: str) -> str:
@@ -121,6 +147,39 @@ class App:
             curses.noecho()
             curses.curs_set(0)
         return raw.decode(errors="replace").strip()
+
+    # Mouse
+    def handle_mouse(self, scr: curses.window) -> bool:
+        """False to quit. A click selects; a double-click or a button click acts."""
+        try:
+            _, x, y, _, state = curses.getmouse()
+        except curses.error:
+            return True
+        wheel_up, wheel_down = curses.BUTTON4_PRESSED, getattr(curses, "BUTTON5_PRESSED", 0)
+        if state & (wheel_up | wheel_down):
+            step = -1 if state & wheel_up else 1
+            if y >= self.detail_y:
+                self.detail_off = max(self.detail_off + step, 0)
+            elif not self.choosing:
+                self.selected = min(max(self.selected + step, 0), self.last())
+            return True
+        double = bool(state & curses.BUTTON1_DOUBLE_CLICKED)
+        if not state & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
+            return True
+        hit = next((h for h in self.hits if h[0] == y and h[1] <= x < h[2]), None)
+        if hit is None:
+            return True
+        _, _, _, kind, arg = hit
+        if kind == "key":
+            return self.handle(scr, arg)
+        if kind == "option" and self.choosing:
+            self.option = arg
+            return self.handle(scr, 10)
+        if kind == "row" and not self.choosing:
+            self.selected = arg
+            if double:
+                return self.handle(scr, 10)
+        return True
 
     # Keys
     def handle(self, scr: curses.window, key: int) -> bool:
@@ -187,6 +246,8 @@ class App:
         curses.curs_set(0)
         curses.use_default_colors()
         curses.init_pair(1, curses.COLOR_RED, -1)
+        scr.keypad(True)
+        curses.mousemask(curses.ALL_MOUSE_EVENTS)
         scr.timeout(REFRESH_MS)
         self.refresh()
         while True:
@@ -195,5 +256,5 @@ class App:
             if key == -1:
                 self.refresh()
                 continue
-            if not self.handle(scr, key):
+            if not (self.handle_mouse(scr) if key == curses.KEY_MOUSE else self.handle(scr, key)):
                 return
