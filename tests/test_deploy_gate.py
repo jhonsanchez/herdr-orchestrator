@@ -1,6 +1,7 @@
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -107,6 +108,9 @@ class PluginDeployTest(unittest.TestCase):
         self.assertFalse(runner_on(self.checkout, os.getpid()))
         child = subprocess.Popen(["sleep", "5"], env={"PYTHONPATH": f"{self.checkout}/.."})
         self.addCleanup(child.kill)
+        deadline = time.monotonic() + 5  # Popen returns before the child execs: its environ is the parent's until then
+        while not runner_on(self.checkout, child.pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
         self.assertTrue(runner_on(self.checkout, child.pid))
 
     def test_is_deployed_needs_both_the_sha_and_the_runner(self) -> None:
