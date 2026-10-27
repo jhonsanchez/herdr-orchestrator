@@ -9,7 +9,7 @@ from unittest import mock
 from herdr_orch.deploy import compare_args, holds, installed_checkout, is_deployed, runner_on
 from herdr_orch.github import PullRequest, parse_pr
 from herdr_orch.herdr import Agent
-from herdr_orch.runner import DEPLOY_POLL_SECONDS, PR_POLL_SECONDS, Runner
+from herdr_orch.runner import BLOCKED_ALERT_S, DEPLOY_POLL_SECONDS, PR_POLL_SECONDS, Runner
 from herdr_orch.watches_core import open_obligations
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
@@ -118,6 +118,40 @@ class DeployGateTest(unittest.TestCase):
         kinds = [k for k in ("green", "is merged", "released") for t in self.told() if k in t]
         self.assertEqual(kinds, ["green", "is merged", "released"])
         self.assertIsNone(self.state.branch_record("issue-1"))
+
+    def test_a_blocked_agent_is_not_told_deployed_until_it_takes_the_prompt(self) -> None:
+        self.merge()
+        self.flag.touch()
+        self.herdr.blocked_agents.add("issue-1")
+        self.runner.tick(1 + DEPLOY_POLL_SECONDS)
+        self.assertEqual(self.prompts(), [])
+        self.assertNotIn("deployed", self.state.branch_record("issue-1") or {})
+        self.assertNotIn("deploy", [e.source for e in self.state.events_since(0)])
+        self.herdr.blocked_agents.clear()
+        self.runner.tick(1 + 2 * DEPLOY_POLL_SECONDS)
+        self.assertEqual(len(self.prompts()), 1)
+
+    def test_a_blocked_agent_is_told_green_on_a_later_tick(self) -> None:
+        self.github.prs["issue-1"] = PullRequest(20, "open", "passing")
+        self.herdr.blocked_agents.add("issue-1")
+        self.runner.tick(1)
+        self.assertEqual(self.told(), [])
+        self.herdr.blocked_agents.clear()
+        self.runner.tick(1 + PR_POLL_SECONDS)
+        self.assertEqual(len([t for t in self.told() if "green" in t]), 1)
+
+    def test_agent_blocked_past_five_minutes_becomes_a_followup_naming_the_dialog(self) -> None:
+        self.herdr.agent_list[0] = Agent("issue-1", "blocked", "w1:p1", "w1")
+        self.herdr.screens["w1:p1"] = ["╭──────╮\n│ Teach auto mode? │\n│ 1. Yes │"]
+        self.runner.tick(0)
+        self.runner.tick(BLOCKED_ALERT_S)
+        self.runner.tick(BLOCKED_ALERT_S + 5)  # once per episode
+        (event,) = [e for e in self.state.events_since(float("-inf")) if e.source == "blocked"]
+        self.assertEqual(event.text, "issue-1 blocked 5m at: Teach auto mode?")
+        got = open_obligations(self.state.events_since(float("-inf")), [], {"issue-1": "blocked"}, {"issue-1"})
+        self.assertEqual([(o.agent, o.reason) for o in got], [("issue-1", "blocked at a dialog")])
+        none = open_obligations(self.state.events_since(float("-inf")), [], {"issue-1": "working"}, {"issue-1"})
+        self.assertEqual(none, [])
 
     def test_no_deploy_check_means_no_gate(self) -> None:
         plain = Runner(Topic(name="waki", dir=self.root / "cfg"), self.state, self.herdr, Quiet(),

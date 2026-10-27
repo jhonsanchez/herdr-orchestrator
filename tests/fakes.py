@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from herdr_orch.herdr import Agent, Workspace
+from herdr_orch.herdr import Agent, AgentBlocked, Workspace
 
 
 class FakeHerdr:
@@ -17,6 +17,7 @@ class FakeHerdr:
         self.attention: set[str] = set()
         self.becomes_ready = True
         self.prompt_error: str | None = None  # when set, prompt() fails with it
+        self.blocked_agents: set[str] = set()  # agents herdr refuses prompts to (agent_blocked)
         self.screens: dict[str, list[str]] = {}  # pane -> visible screens in turn; the last one stays
 
     def _pane(self) -> str:
@@ -35,6 +36,8 @@ class FakeHerdr:
         return shown.pop(0) if len(shown) > 1 else shown[0]
 
     def prompt(self, agent: str, text: str) -> None:
+        if agent in self.blocked_agents:
+            raise AgentBlocked(f"{agent} is blocked")
         if self.prompt_error:
             raise RuntimeError(self.prompt_error)
         self.calls.append(("prompt", agent, text))

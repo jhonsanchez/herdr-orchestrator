@@ -107,6 +107,8 @@ def _ending(event: Event) -> tuple[str, str] | None:
     for suffix in (" done", " gone"):
         if event.source == "agents" and event.text.endswith(suffix):
             return event.text[: -len(suffix)], suffix.strip()
+    if event.source == "blocked" and " blocked " in event.text:
+        return event.text.split(" blocked ")[0], "blocked at a dialog"
     if event.source == "stale" and " stale (idle)" in event.text:
         return event.text.split(" stale (idle)")[0], "stale (idle)"
     return None
