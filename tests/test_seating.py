@@ -260,8 +260,8 @@ if __name__ == "__main__":
 class EnsureLinkTest(unittest.TestCase):
     def test_the_brief_names_the_stable_link_and_it_follows_an_install_that_moves(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp) / "home"
-            old, new = Path(tmp) / "plug" / "1-0" / "bin" / "herdr-orch", Path(tmp) / "plug" / "2-0" / "bin" / "herdr-orch"
+            home = Path(tmp).resolve() / "home"
+            old, new = Path(tmp).resolve() / "plug" / "1-0" / "bin" / "herdr-orch", Path(tmp).resolve() / "plug" / "2-0" / "bin" / "herdr-orch"
             for cli in (old, new):
                 cli.parent.mkdir(parents=True)
                 cli.write_text("#!/bin/sh\n")
