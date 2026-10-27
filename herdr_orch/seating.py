@@ -259,9 +259,12 @@ def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str) -> Non
     state.untrack(branch)
 
 
-def validated(state: TopicState, branch: str, now: float) -> None:
+def validated(state: TopicState, branch: str, now: float, evidence: str) -> None:
     """The agent's signal that its work is validated: the Orchestrator hears of it as an Event
-    and releases the branch once its PR is merged or closed."""
-    if not state.mark_validated(branch, now):
+    carrying the evidence of the check, and releases the branch once its PR is merged or closed."""
+    evidence = evidence.strip()
+    if not evidence:
+        raise ValueError("validated needs evidence: pass --evidence with what you ran and what it showed")
+    if not state.mark_validated(branch, now, evidence):
         raise ValueError(f"{branch} is not tracked in Topic {state.topic}")
-    state.append_event("validated", f"{branch} is validated: release it once its PR is merged or closed", now)
+    state.append_event("validated", f"{branch} is validated: {' '.join(evidence.split())[:300]}", now)

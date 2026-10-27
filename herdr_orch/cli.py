@@ -133,6 +133,8 @@ def main(
     validated_cmd = sub.add_parser("validated", help="an agent's signal that its branch is validated and can be released")
     validated_cmd.add_argument("topic")
     validated_cmd.add_argument("--branch", required=True)
+    validated_cmd.add_argument("--evidence", required=True,
+                               help="what you ran to check the deployed change and what it showed (the command's exit and last lines)")
     inbox_cmd = sub.add_parser("inbox", help="write Inbox items as the Orchestrator").add_subparsers(dest="inbox_cmd", required=True)
     add_cmd = inbox_cmd.add_parser("add", help="put a decision for the user in the Attention pane")
     add_cmd.add_argument("--topic", required=True)
@@ -245,7 +247,7 @@ def main(
             release(state, herdr, CliGitHub(), args.branch)
             print(f"{args.branch} released")
         elif args.cmd == "validated":
-            validated(state, args.branch, now())
+            validated(state, args.branch, now(), args.evidence)
             print(f"{args.branch} marked validated")
         elif args.cmd == "reconcile":
             print(reconcile(topic, state, herdr, now(), home=env.get("HOME")).summary())
