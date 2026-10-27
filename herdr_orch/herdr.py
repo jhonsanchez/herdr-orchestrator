@@ -129,10 +129,14 @@ class CliHerdr:
     def _picked_up(self, agent: str, seconds: int) -> bool:
         for _ in range(seconds):
             time.sleep(1)
-            status = (self._json("agent", "get", agent).get("result") or {}).get("agent", {}).get("agent_status")
+            status = self._status_of(agent)
             if status in ("working", "blocked"):
                 return True
         return False
+
+    def _status_of(self, agent: str) -> str | None:
+        status = (self._json("agent", "get", agent).get("result") or {}).get("agent", {}).get("agent_status")
+        return str(status) if status else None
 
     def _screen_of(self, agent: str) -> str:
         return self._run("agent", "read", agent, "--source", "visible", "--lines", "80").stdout
@@ -153,7 +157,8 @@ class CliHerdr:
         on its next tick). AgentBlocked when herdr refuses it because the agent sits at a dialog,
         AgentBusy when the person has typed something a prompt would collide with."""
         snippet = text.splitlines()[0][:30]
-        if typed_input(self._screen_of(agent)):
+        # A dialog's selected option is also a ❯ line: herdr's `blocked` says which it is, and _send then refuses it.
+        if typed_input(self._screen_of(agent)) and self._status_of(agent) != "blocked":
             raise AgentBusy(f"{agent} has text in its input box; the prompt was not sent")
         for _ in range(2):
             self._send(agent, text)

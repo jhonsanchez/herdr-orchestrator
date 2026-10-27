@@ -79,11 +79,22 @@ class CliHerdrPromptBlockedTest(unittest.TestCase):
         self.addCleanup(screen.stop)
 
     def test_text_in_the_input_box_is_never_typed_over(self) -> None:
-        with mock.patch.object(CliHerdr, "_screen_of", return_value="❯ regarding waki session,\n"):
+        with mock.patch.object(CliHerdr, "_screen_of", return_value="❯ regarding waki session,\n"), \
+                mock.patch.object(CliHerdr, "_status_of", return_value="idle"):
             with mock.patch("herdr_orch.herdr.subprocess.run") as run:
                 with self.assertRaises(AgentBusy):
                     CliHerdr("herdr").prompt("orch-personal", "hello")
         run.assert_not_called()
+
+    def test_a_dialogs_selected_option_is_not_the_persons_text(self) -> None:
+        dialog = "Do you trust this folder?\n ❯ No, exit\n   Yes, I trust this folder\n"
+        err = subprocess.CalledProcessError(1, ["herdr"], output=BLOCKED, stderr="")
+        with mock.patch.object(CliHerdr, "_screen_of", return_value=dialog), \
+                mock.patch.object(CliHerdr, "_status_of", return_value="blocked"), \
+                mock.patch("herdr_orch.herdr.subprocess.run", side_effect=err):
+            with self.assertRaises(AgentBlocked) as caught:
+                CliHerdr("herdr").prompt("issue-1", "hello")
+        self.assertNotIsInstance(caught.exception, AgentBusy)
 
     def test_herdr_refusing_a_blocked_agent_raises_agent_blocked(self) -> None:
         err = subprocess.CalledProcessError(1, ["herdr"], output=BLOCKED, stderr="")
