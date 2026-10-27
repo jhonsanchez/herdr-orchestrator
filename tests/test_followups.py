@@ -40,6 +40,12 @@ class ObligationsTest(unittest.TestCase):
         self.assertEqual(open_obligations(events, [], {"a": "working", "b": "working"}, {"a", "b"}), [])
         self.assertEqual(open_obligations(events, [], {}, set()), [])
 
+    def test_a_pr_of_any_state_resolves_the_followup(self) -> None:
+        events = [Event(10, "agents", "a done")]
+        for state in ("open", "merged", "closed"):
+            branch = {"agent": "a", "pr_state": state, "pr": 5, "checks": "passing", "pr_since": 10.0}
+            self.assertEqual(open_obligations(events, [], {"a": "done"}, {"a"}, [branch]), [], state)
+
     def test_a_gone_agent_is_owed_although_its_registry_entry_is_removed(self) -> None:
         events = [Event(10, "agents", "a gone")]
         self.assertEqual([o.agent for o in open_obligations(events, [], {}, set())], ["a"])

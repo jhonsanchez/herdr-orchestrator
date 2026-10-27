@@ -119,13 +119,13 @@ def open_obligations(
     in any state, was written at or after that. It also ends when the agent works again or
     is no longer Managed. Writing a chat message closes nothing.
 
-    An agent whose branch has an open PR is judged by the PR instead (see `pr_obligation`):
-    the PR is its report, so finishing is no obligation, but an orphaned or failing PR is."""
-    open_prs = {str(b["agent"]) for b in branches if b.get("pr_state") == "open"}
+    An agent whose branch has a PR is judged by the PR instead (see `pr_obligation`): a merged or closed PR owes nothing,
+    the PR is its report, so finishing is no obligation, but an open PR that is orphaned or failing is."""
+    with_pr = {str(b["agent"]) for b in branches if b.get("pr_state") in ("open", "merged", "closed")}
     anchors: dict[str, Obligation] = {}
     for event in events:
         ending = _ending(event)
-        if ending is None or ending[0] in open_prs:
+        if ending is None or ending[0] in with_pr:
             continue
         agent, reason = ending
         if reason != "gone" and agent not in managed:
