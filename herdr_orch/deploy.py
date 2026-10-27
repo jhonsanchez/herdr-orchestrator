@@ -19,12 +19,29 @@ def installed_checkout(plugins_dir: Path) -> Path | None:
     return max(bins, key=lambda b: b.stat().st_mtime).parent.parent if bins else None
 
 
+def _git(checkout: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(checkout), *args], capture_output=True, text=True, timeout=30)
+
+
+def compare_args(sha: str, head: str) -> list[str]:
+    """gh api arguments asking GitHub whether head is level with or ahead of sha; gh fills {owner}/{repo} from the checkout."""
+    return ["gh", "api", "-X", "GET", f"repos/{{owner}}/{{repo}}/compare/{sha}...{head}", "-f", "per_page=1",
+            "--jq", ".status"]
+
+
 def holds(checkout: Path, sha: str) -> bool:
+    """Whether the checkout's HEAD is sha or descends from it. herdr installs a depth-1 clone, so git
+    cannot see older merges: ask GitHub (compare status identical/ahead) and fail closed when it cannot say."""
     try:
-        return subprocess.run(["git", "-C", str(checkout), "merge-base", "--is-ancestor", sha, "HEAD"],
-                              capture_output=True, timeout=30).returncode == 0
+        head = _git(checkout, "rev-parse", "HEAD").stdout.strip()
+        if not head:
+            return False
+        if head == sha or _git(checkout, "merge-base", "--is-ancestor", sha, head).returncode == 0:
+            return True
+        out = subprocess.run(compare_args(sha, head), cwd=checkout, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return False
+    return out.returncode == 0 and out.stdout.strip() in ("identical", "ahead")
 
 
 def _environ(pid: int) -> str:
