@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from herdr_orch.github import GitHub, OpenPr
-from herdr_orch.state import TopicState
+from herdr_orch.state import TopicState, validation_stands
 
 DETAIL_TTL_S = 600.0  # a PR's detail is re-read at least this often, even when nothing moved
 CONFLICTED = ("dirty", "behind")
@@ -56,7 +56,7 @@ def classify_branch(branch: Mapping[str, Any], pr: OpenPr | None, agent_status: 
     if state == "closed":
         return _wait("human", "orchestrator")
     if state == "merged":
-        if branch.get("validated_at") and str(branch.get("evidence") or "").strip():
+        if validation_stands(branch, deploy_gate) and str(branch.get("evidence") or "").strip():
             return Entry("working", None, "runner")  # the runner is releasing it
         if deploy_gate and not branch.get("deployed"):
             return _wait("deploy", "runner")
