@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -67,7 +68,8 @@ class CliTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_init_then_heartbeat(self) -> None:
-        with redirect_stdout(io.StringIO()):
+        self.env["HOME"] = self.tmp.name  # heartbeat keeps the stable herdr-orch link under HOME
+        with redirect_stdout(io.StringIO()), mock.patch("herdr_orch.seating.spawn_runner"):
             self.assertEqual(main(["init", "waki"], self.env), 0)
             self.assertEqual(main(["heartbeat", "waki"], self.env, now=lambda: 77.0), 0)
         self.assertTrue((Path(self.env["HERDR_ORCH_CONFIG"]) / "topics/waki/playbook.md").is_file())
@@ -182,3 +184,42 @@ class AnswerCliTest(unittest.TestCase):
     def test_an_answer_needs_text_unless_dismissing(self) -> None:
         with redirect_stderr(io.StringIO()):
             self.assertEqual(main(["answer", "waki", "a1"], self.env, adapter=self.herdr), 1)
+
+
+class RunnerDownTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.env = {"HERDR_ORCH_CONFIG": str(root / "cfg"), "HERDR_ORCH_STATE": str(root / "state"), "HOME": str(root)}
+        with redirect_stdout(io.StringIO()):
+            main(["init", "waki"], self.env)
+        self.state = TopicState(root / "state", "waki")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def run_cmd(self, *argv: str) -> str:
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch("herdr_orch.seating.spawn_runner") as spawn, \
+                mock.patch("herdr_orch.cli._alive", return_value=False):
+            self.assertEqual(main(list(argv), self.env, now=lambda: 1000.0, adapter=FakeHerdr()), 0)
+        self.spawned = spawn.call_count
+        return out.getvalue()
+
+    def test_heartbeat_respawns_a_dead_runner_and_says_so(self) -> None:
+        self.state.record_runner(4242, 900.0, 3)
+        out = self.run_cmd("heartbeat", "waki")
+        self.assertEqual(self.spawned, 1)
+        self.assertIn("Watch runner for waki was down", out)
+
+    def test_heartbeat_with_a_live_runner_prints_nothing(self) -> None:
+        self.state.record_runner(os.getpid(), 990.0, 3)
+        with mock.patch("herdr_orch.cli._alive", return_value=True), redirect_stdout(io.StringIO()) as out, \
+                mock.patch("herdr_orch.seating.spawn_runner") as spawn:
+            main(["heartbeat", "waki"], self.env, now=lambda: 1000.0, adapter=FakeHerdr())
+        self.assertEqual((out.getvalue(), spawn.call_count), ("", 0))
+
+    def test_status_says_the_runner_is_down_without_respawning(self) -> None:
+        out = self.run_cmd("status", "waki")
+        self.assertEqual(self.spawned, 0)
+        self.assertIn("Watch runner for waki is not running", out)

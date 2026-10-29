@@ -86,6 +86,10 @@ class TopicState:
         return self.dir / "runner"
 
     @property
+    def socket_file(self) -> Path:
+        return self.dir / "socket"
+
+    @property
     def runner_log(self) -> Path:
         return self.dir / "runner.log"
 
@@ -326,6 +330,17 @@ class TopicState:
             return None
         return float(self.heartbeat.read_text().strip())
 
+    # The herdr socket of the session the Topic's Orchestrator lives in: every later command uses it.
+    def record_socket(self, path: str) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.socket_file.write_text(path + "\n")
+
+    def socket(self) -> str | None:
+        try:
+            return self.socket_file.read_text().strip() or None
+        except OSError:
+            return None
+
     # Watch runner liveness: "<pid> <epoch of its last tick> <ticks>", rewritten every tick.
     def record_runner(self, pid: int, now: float, ticks: int) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -344,6 +359,16 @@ class TopicState:
         status = self.runner_status()
         if status is not None and status.pid == pid:
             self.runner.unlink(missing_ok=True)
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def find_managed(root: Path, pane_id: str) -> Managed | None:

@@ -36,6 +36,7 @@ class Reconciled:
     swept: list[str] = field(default_factory=list)  # agents whose open follow-ups or questions were dropped
     registered: list[str] = field(default_factory=list)  # hand-started agents put in the Registry (#94)
     unregistered: list[str] = field(default_factory=list)  # named agents in a Topic worktree that stay outside it
+    refused: str | None = None  # why the Registry was left alone (#108)
 
     def summary(self) -> str:
         return (f"adopted {len(self.adopted)} branch(es){_list(self.adopted)}, "
@@ -44,7 +45,8 @@ class Reconciled:
                 f"flagged {len(self.switched)} switched branch(es){_list(self.switched)}, "
                 f"swept rows of {len(self.swept)} vanished agent(s){_list(self.swept)}, "
                 f"registered {len(self.registered)} hand-started agent(s){_list(self.registered)}, "
-                f"{len(self.unregistered)} named agent(s) not in the Registry{_list(self.unregistered)}")
+                f"{len(self.unregistered)} named agent(s) not in the Registry{_list(self.unregistered)}"
+                + (f", refused to drop Registry entries: {self.refused}" if self.refused else ""))
 
 
 def _list(items: list[str]) -> str:
@@ -63,7 +65,8 @@ def reconcile(
     agent is gone, and compact the Inbox by id. Safe to repeat: a second pass changes nothing."""
     agents = herdr.agents()
     dropped = []
-    for pane, name in state.managed().items():
+    refused = _drop_refusal(topic, state, agents)
+    for pane, name in ({} if refused else state.managed()).items():
         if not any(a.name == name and a.pane_id == pane for a in agents):
             state.give_back(pane)
             dropped.append(name)
@@ -109,7 +112,22 @@ def reconcile(
 
 
     swept = _sweep(state, agents, now)
-    return Reconciled(adopted, dropped, state.compact_inbox(), switched, swept, registered, unregistered)
+    return Reconciled(adopted, dropped, state.compact_inbox(), switched, swept, registered, unregistered, refused)
+
+
+def _drop_refusal(topic: Topic, state: TopicState, agents: list[Agent]) -> str | None:
+    """Why the Registry must not be pruned now: herdr shows none of the Topic's agents (likely the wrong
+    session, #108), or most of a sizeable Registry is missing at once. None when pruning is sane."""
+    managed = state.managed()
+    if not managed:
+        return None
+    visible = sum(1 for pane, name in managed.items() if any(a.name == name and a.pane_id == pane for a in agents))
+    if visible == 0 and not any(a.name == topic.orchestrator for a in agents):
+        return f"this herdr session shows none of the {len(managed)} Managed agents nor {topic.orchestrator}"
+    missing = len(managed) - visible
+    if len(managed) >= 3 and missing * 2 > len(managed):
+        return f"{missing} of {len(managed)} Managed agents are missing at once"
+    return None
 
 
 def _sweep(state: TopicState, agents: list[Agent], now: float) -> list[str]:
