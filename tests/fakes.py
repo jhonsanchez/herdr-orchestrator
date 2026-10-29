@@ -65,6 +65,11 @@ class FakeHerdr:
         self.workspace_list = [w for w in self.workspace_list if w.workspace_id != workspace_id]
         return workspace_id not in self.gone_workspaces
 
+    def workspace_close(self, workspace_id: str) -> None:
+        self.calls.append(("workspace_close", workspace_id))
+        self.workspace_list = [w for w in self.workspace_list if w.workspace_id != workspace_id]
+        self.agent_list = [a for a in self.agent_list if a.workspace_id != workspace_id]
+
     def pane_split(self, pane_id: str, cwd: str) -> str:
         self.calls.append(("pane_split", pane_id, cwd))
         return self._pane()

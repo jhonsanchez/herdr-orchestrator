@@ -8,7 +8,7 @@ from pathlib import Path
 
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch import seating
-from herdr_orch.seating import agent_name, default_base, ensure_link, ensure_orch_session, orch_herdr, seat, start, startup_screen
+from herdr_orch.seating import agent_name, bring_back, default_base, ensure_link, ensure_orch_session, orch_herdr, seat, session_name, start, startup_screen
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
 from tests.fakes import FakeHerdr
@@ -322,6 +322,31 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual(orch.of("workspace_create"), [])
         self.assertEqual(self.spawned, [("/x", "zebra")])
 
+    def test_start_says_where_it_seated_the_orchestrator(self) -> None:
+        self.write_playbook()
+        self.state.record_socket("/home/u/.config/herdr/sessions/personal/herdr.sock")
+        said: list[str] = []
+        start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=said.append)
+        self.assertIn("orch-zebra is running in workspace w51 of herdr session personal", said)
+
+    def test_start_says_where_an_orchestrator_already_running_is(self) -> None:
+        self.write_playbook()
+        self.state.record_socket("/home/u/.config/herdr/herdr.sock")
+        self.state.mark_briefed()
+        self.herdr.agent_list = [Agent("orch-zebra", "idle", "w5:p1", "w5")]
+        said: list[str] = []
+        self.assertTrue(start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=said.append))
+        self.assertEqual(said, ["orch-zebra was already running in workspace w5 of herdr session default"])
+
+    def test_a_detached_start_says_how_to_reach_the_orchestrator(self) -> None:
+        self.write_playbook()
+        orch = FakeHerdr()
+        orch.agent_list = [Agent("orch-zebra", "idle", "w1:p1", "w1")]
+        self.state.mark_briefed()
+        said: list[str] = []
+        start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=said.append, orch=orch)
+        self.assertEqual(said, ["orch-zebra was already running in workspace w1 of herdr session orch: herdr-orch show zebra"])
+
     def test_start_resumes_and_briefs_an_orchestrator_seated_but_never_briefed(self) -> None:
         self.write_playbook()
         self.herdr.agent_list = [Agent("orch-zebra", "idle", "w5:p1", "w5")]
@@ -520,3 +545,66 @@ class OrchSessionTest(unittest.TestCase):
             self.assertIs(orch_herdr(state, topic_herdr, made.__getitem__), topic_herdr)  # type: ignore[arg-type]
             state.record_orch_socket("/orch.sock")
             self.assertIs(orch_herdr(state, topic_herdr, made.__getitem__), orch)  # type: ignore[arg-type]
+
+
+class SessionNameTest(unittest.TestCase):
+    def test_a_named_sessions_socket_names_it(self) -> None:
+        self.assertEqual(session_name("/home/u/.config/herdr/sessions/waki/herdr.sock"), "waki")
+
+    def test_the_default_sessions_socket_is_default(self) -> None:
+        self.assertEqual(session_name("/home/u/.config/herdr/herdr.sock"), "default")
+
+    def test_no_socket_is_no_name(self) -> None:
+        self.assertIsNone(session_name(None))
+
+
+class BringBackTest(unittest.TestCase):
+    """An Orchestrator a detached start put in the orch session moves back to its Topic's session."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.topic = Topic(name="personal", dir=root / "cfg/topics/personal")
+        self.state = TopicState(root / "state", "personal")
+        self.state.record_socket("/personal.sock")
+        self.state.record_orch_socket("/orch.sock")
+        self.state.mark_briefed()
+        self.state.record_runner(4242, 1000.0, 7)
+        self.orch = FakeHerdr()
+        self.orch.agent_list = [Agent("orch-personal", "idle", "w1:p1", "w1")]
+        self.stopped: list[str] = []
+        self.killed: list[tuple[int, str]] = []
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def bring_back(self) -> None:
+        bring_back(self.topic, self.state, self.orch, stop_session=self.stopped.append,
+                   stop_runner=lambda pid, topic: self.killed.append((pid, topic)))
+
+    def test_it_closes_the_orch_workspace_and_forgets_the_orch_session(self) -> None:
+        self.bring_back()
+        self.assertEqual(self.orch.of("workspace_close"), [("workspace_close", "w1")])
+        self.assertIsNone(self.state.orch_socket())
+        self.assertEqual(self.state.socket(), "/personal.sock")
+        self.assertFalse(self.state.briefed.exists())  # the reseated Orchestrator is briefed afresh
+
+    def test_it_stops_the_runner_that_watches_the_orch_session(self) -> None:
+        self.bring_back()
+        self.assertEqual(self.killed, [(4242, "personal")])
+        self.assertIsNone(self.state.runner_status())  # the runner start spawns next must not defer to it
+
+    def test_it_stops_the_orch_session_once_no_orchestrator_is_left_in_it(self) -> None:
+        self.bring_back()
+        self.assertEqual(self.stopped, ["orch"])
+
+    def test_it_leaves_the_orch_session_to_another_topics_orchestrator(self) -> None:
+        self.orch.agent_list.append(Agent("orch-waki", "idle", "w2:p1", "w2"))
+        self.bring_back()
+        self.assertEqual(self.stopped, [])
+
+    def test_an_orchestrator_already_gone_from_the_orch_session_only_clears_the_record(self) -> None:
+        self.orch.agent_list = []
+        self.bring_back()
+        self.assertEqual(self.orch.of("workspace_close"), [])
+        self.assertIsNone(self.state.orch_socket())
