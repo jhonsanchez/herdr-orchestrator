@@ -61,8 +61,11 @@ class Runner:
         notify: Callable[[str, str], None],
         say: Callable[[str], None] = lambda line: None,
         github: GitHub | None = None,
+        orch_herdr: Herdr | None = None,
     ) -> None:
         self.topic, self.state, self.herdr, self.watches, self.notify = topic, state, herdr, watches, notify
+        # The session the Orchestrator runs in: the Topic's own unless it was started detached.
+        self.orch_herdr = orch_herdr if orch_herdr is not None else herdr
         self.say, self.github = say, github
         self._now = 0.0
         self._pr_polled_at = float("-inf")
@@ -131,7 +134,8 @@ class Runner:
         for watch, line in self.watches.lines():
             self.state.append_event(watch, line, now)
 
-        orch = agents.get(self.orchestrator)
+        orch = agents.get(self.orchestrator) if self.orch_herdr is self.herdr else next(
+            (a for a in self.orch_herdr.agents() if a.name == self.orchestrator), None)
         if orch is not None and orch.status in READY:
             if self._delivering:
                 # A successful prompt starts a turn; seeing the Orchestrator ready again means it answered.
@@ -140,7 +144,7 @@ class Runner:
             new = self.state.events_since(self._delivered_upto)
             if new:
                 try:
-                    self.herdr.prompt(self.orchestrator, _batch(self.topic.name, new))
+                    self.orch_herdr.prompt(self.orchestrator, _batch(self.topic.name, new))
                 except AgentBusy:  # the person is typing: hold the Events (they stay batched), speak up after a while
                     self._typing_since = self._typing_since if self._typing_since is not None else now
                     if now - self._typing_since >= TYPING_ALERT_S and not self._typing_alerted:
@@ -178,7 +182,7 @@ class Runner:
             self.done = now - self._missing_since >= GONE_GRACE_S
         else:
             self._missing_since = None
-            if not self.herdr.has_attention(orch.workspace_id):
+            if self.orch_herdr is self.herdr and not self.herdr.has_attention(orch.workspace_id):
                 self.herdr.attention_open(orch.workspace_id, orch.pane_id, self.topic.name)
         self.ticks += 1
         self.state.record_runner(os.getpid(), now, self.ticks)

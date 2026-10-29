@@ -29,6 +29,15 @@ class AttentionActionsTest(unittest.TestCase):
     def lines(self) -> list[dict[str, object]]:
         return [json.loads(line) for line in self.state.inbox.read_text().splitlines()]
 
+    def test_a_detached_orchestrator_counts_as_present_for_the_topic(self) -> None:
+        self.herdr.agent_list = [Agent("waki-1", "idle", "w1:p1", "w1")]
+        orch = FakeHerdr()
+        orch.agent_list = [Agent("orch-waki", "idle", "w1:p1", "w1")]
+        view = load(self.root / "state", self.topics, self.herdr, now=200, orch_herdr=lambda topic: orch)
+        self.assertEqual(view.banners, [])
+        gone = load(self.root / "state", self.topics, self.herdr, now=200, orch_herdr=lambda topic: FakeHerdr())
+        self.assertTrue(any("Orchestrator" in b or "Unattended" in b for b in gone.banners))
+
     def test_load_builds_the_view_from_every_topic(self) -> None:
         view = load(self.root / "state", self.topics, self.herdr, now=200)
         [row] = view.rows()

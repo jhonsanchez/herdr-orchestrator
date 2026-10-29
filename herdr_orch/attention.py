@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from herdr_orch.herdr import Agent, Herdr, Workspace
 from herdr_orch.ledger import ledger_lines
@@ -194,8 +194,10 @@ def build_view(
 
 
 def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
-         hidden: set[tuple[str, str]] = frozenset(), scope: str | None = None) -> View:  # type: ignore[assignment]
-    """Everything the pane shows, read from every Topic's state and herdr."""
+         hidden: set[tuple[str, str]] = frozenset(), scope: str | None = None,  # type: ignore[assignment]
+         orch_herdr: Callable[[Topic], Herdr] | None = None) -> View:
+    """Everything the pane shows, read from every Topic's state and herdr. `orch_herdr` names the herdr an
+    Orchestrator that runs in a detached session is reached through (default: `herdr` for every Topic)."""
     agents, workspaces = herdr.agents(), herdr.workspaces()
     present = {a.name for a in agents if a.name}
     items: list[dict[str, Any]] = []
@@ -233,8 +235,10 @@ def load(states: Path, topics: list[Topic], herdr: Herdr, now: float,
         waiting = state.events_since(heartbeat if heartbeat is not None else float("-inf"))
         pending_since = waiting[0].at if waiting else None
         # A Topic that was never started has nobody to be Unattended by.
-        if waiting or registered or topic.orchestrator in present:
-            statuses.append(TopicStatus(topic.name, topic.orchestrator in present, heartbeat,
+        home = orch_herdr(topic) if orch_herdr else herdr
+        orch_up = topic.orchestrator in (present if home is herdr else {a.name for a in home.agents()})
+        if waiting or registered or orch_up:
+            statuses.append(TopicStatus(topic.name, orch_up, heartbeat,
                                         pending_since, topic.heartbeat_window_min, state.runner_status()))
     return build_view(items, agents, workspaces, managed, statuses, now, hidden, followups, scope, ledger)
 

@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -7,7 +8,7 @@ from pathlib import Path
 
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch import seating
-from herdr_orch.seating import agent_name, default_base, ensure_link, seat, start, startup_screen
+from herdr_orch.seating import agent_name, default_base, ensure_link, ensure_orch_session, orch_herdr, seat, start, startup_screen
 from herdr_orch.state import TopicState
 from herdr_orch.topics import Topic
 from tests.fakes import FakeHerdr
@@ -288,6 +289,39 @@ class SeatingTest(unittest.TestCase):
         [(_, _, _, args)] = self.herdr.of("agent_start")
         self.assertEqual(args, ("--model", "opus"))
 
+    def test_a_detached_start_seats_the_orchestrator_in_its_own_session_and_points_it_at_the_topic(self) -> None:
+        self.write_playbook()
+        self.state.record_socket("/zebra.sock")
+        orch = FakeHerdr()
+        start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, orch=orch)
+        self.assertEqual(self.herdr.calls, [("spawn",)])  # nothing added to the Topic's session
+        [(_, _, label)] = orch.of("workspace_create")
+        self.assertEqual(label, "orch-zebra")
+        calls = [c[0] for c in orch.calls]
+        self.assertLess(calls.index("pane_run"), calls.index("agent_start"))
+        [(_, pane, command)] = orch.of("pane_run")
+        self.assertEqual(command, "export HERDR_SOCKET_PATH=/zebra.sock")
+        self.assertEqual(orch.of("attention_open"), [])
+        self.assertEqual(len(orch.of("prompt")), 1)
+
+    def test_a_detached_start_reports_a_startup_dialog_in_the_inbox_until_it_is_answered(self) -> None:
+        self.write_playbook()
+        orch = FakeHerdr()
+        orch.ready_after_start = False
+        start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=lambda m: None, orch=orch)
+        item, resolved = [i for i in self.state.inbox_lines() if i["id"] == "orch-dialog"]
+        self.assertIn("herdr session attach orch", str(item["question"]))
+        self.assertEqual((item["status"], resolved["status"]), ("open", "resolved"))  # briefed once it was answered
+
+    def test_a_detached_start_finds_its_orchestrator_in_the_orch_session_only(self) -> None:
+        self.write_playbook()
+        orch = FakeHerdr()
+        orch.agent_list = [Agent("orch-zebra", "idle", "w1:p1", "w1")]
+        self.state.mark_briefed()
+        self.assertTrue(start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, orch=orch))
+        self.assertEqual(orch.of("workspace_create"), [])
+        self.assertEqual(self.spawned, [("/x", "zebra")])
+
     def test_start_resumes_and_briefs_an_orchestrator_seated_but_never_briefed(self) -> None:
         self.write_playbook()
         self.herdr.agent_list = [Agent("orch-zebra", "idle", "w5:p1", "w5")]
@@ -419,9 +453,70 @@ class SessionTest(unittest.TestCase):
             self.pick("/personal.sock")
         self.assertEqual(self.sessions["/personal.sock"].calls, [])
 
+    def test_an_orchestrator_running_in_its_own_session_satisfies_the_guard(self) -> None:
+        self.state.record_socket("/waki.sock")
+        self.state.record_orch_socket("/orch.sock")
+        self.sessions["/orch.sock"] = FakeHerdr()
+        self.sessions["/orch.sock"].agent_list = [Agent("orch-waki", "idle", "w1:p1", "w1")]
+        self.assertIs(self.pick("/personal.sock"), self.sessions["/waki.sock"])
+
     def test_the_recorded_session_itself_may_start_a_missing_orchestrator(self) -> None:
         self.state.record_socket("/waki.sock")
         self.assertIs(self.pick("/waki.sock"), self.sessions["/waki.sock"])
 
     def test_nothing_recorded_uses_the_callers(self) -> None:
         self.assertIs(self.pick("/personal.sock"), self.sessions["/personal.sock"])
+
+
+class OrchSessionTest(unittest.TestCase):
+    def runner(self, running_after: int) -> tuple[list[list[str]], list[dict[str, object]], object]:
+        """A fake `herdr`: `session list` shows orch running from its `running_after`-th call on."""
+        listed: list[list[str]] = []
+        started: list[dict[str, object]] = []
+
+        def run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+            listed.append(cmd)
+            up = len(listed) > running_after
+            rows = [{"name": "personal", "running": True, "socket_path": "/personal.sock"},
+                    {"name": "orch", "running": up, "socket_path": "/orch.sock"}]
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"sessions": rows}), stderr="")
+
+        def popen(cmd: list[str], **kw: object) -> object:
+            started.append({"cmd": cmd, **kw})
+            return object()
+
+        self.run_, self.popen = run, popen
+        return listed, started, run
+
+    def test_a_running_orch_session_is_reused(self) -> None:
+        _, started, run = self.runner(running_after=0)
+        self.assertEqual(ensure_orch_session(run=run, popen=self.popen, sleep=lambda s: None, binary="herdr"), "/orch.sock")  # type: ignore[arg-type]
+        self.assertEqual(started, [])
+
+    def test_a_missing_orch_session_is_started_headless_and_detached_from_the_callers(self) -> None:
+        _, started, run = self.runner(running_after=2)
+        with mock.patch.dict(os.environ, {"HERDR_SESSION": "personal", "HERDR_SOCKET_PATH": "/personal.sock", "HERDR_PANE_ID": "w1:p1"}):
+            sock = ensure_orch_session(run=run, popen=self.popen, sleep=lambda s: None, binary="herdr")  # type: ignore[arg-type]
+        self.assertEqual(sock, "/orch.sock")
+        [one] = started
+        self.assertEqual(one["cmd"], ["herdr", "server"])
+        env = one["env"]
+        assert isinstance(env, dict)
+        self.assertEqual(env["HERDR_SESSION"], "orch")
+        self.assertNotIn("HERDR_SOCKET_PATH", env)
+        self.assertNotIn("HERDR_PANE_ID", env)
+        self.assertTrue(one["start_new_session"])
+
+    def test_a_session_that_never_comes_up_is_an_error(self) -> None:
+        _, _, run = self.runner(running_after=10**6)
+        with mock.patch.object(seating, "SESSION_WAIT_S", 1.0), self.assertRaisesRegex(RuntimeError, "did not come up"):
+            ensure_orch_session(run=run, popen=self.popen, sleep=lambda s: None, binary="herdr")  # type: ignore[arg-type]
+
+    def test_the_orchestrator_is_reached_through_its_recorded_socket_else_the_topics_herdr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = TopicState(Path(tmp), "waki")
+            topic_herdr, orch = FakeHerdr(), FakeHerdr()
+            made = {"/orch.sock": orch}
+            self.assertIs(orch_herdr(state, topic_herdr, made.__getitem__), topic_herdr)  # type: ignore[arg-type]
+            state.record_orch_socket("/orch.sock")
+            self.assertIs(orch_herdr(state, topic_herdr, made.__getitem__), orch)  # type: ignore[arg-type]

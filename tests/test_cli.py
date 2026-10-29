@@ -11,11 +11,11 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from herdr_orch import cli
-from herdr_orch.cli import main, resolve_topic
+from herdr_orch.cli import _start, main, resolve_topic
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch.notify import notifier
 from herdr_orch.state import TopicState
-from herdr_orch.topics import load_topics
+from herdr_orch.topics import Topic, load_topics
 from tests.fakes import FakeHerdr
 
 
@@ -290,3 +290,48 @@ class RunnerOwnershipTest(unittest.TestCase):
         status = self.state.runner_status()
         assert status is not None
         self.assertEqual(status.pid, 4242)
+
+
+class DetachedStartTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.topic = Topic(name="waki", dir=root / "cfg/topics/waki")
+        self.state = TopicState(root / "state", "waki")
+        self.herdr = FakeHerdr()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_start_records_and_uses_the_orch_session_when_the_topic_socket_is_known(self) -> None:
+        with mock.patch("herdr_orch.cli.ensure_orch_session", return_value="/orch.sock") as ensure, \
+                mock.patch("herdr_orch.cli.start", return_value=True) as seat_orch:
+            self.assertTrue(_start(self.topic, self.state, self.herdr, "/x", True, "/waki.sock"))
+        ensure.assert_called_once_with()
+        self.assertEqual((self.state.socket(), self.state.orch_socket()), ("/waki.sock", "/orch.sock"))
+        self.assertEqual(seat_orch.call_args.kwargs["orch"].socket, "/orch.sock")
+
+    def test_start_keeps_an_orchestrator_already_running_in_the_topics_session(self) -> None:
+        self.herdr.agent_list = [Agent("orch-waki", "idle", "w1:p1", "w1")]
+        with mock.patch("herdr_orch.cli.ensure_orch_session") as ensure, \
+                mock.patch("herdr_orch.cli.start", return_value=True) as seat_orch:
+            _start(self.topic, self.state, self.herdr, "/x", True, "/waki.sock")
+        ensure.assert_not_called()
+        self.assertIsNone(seat_orch.call_args.kwargs["orch"])
+
+    def test_start_without_a_topic_socket_stays_in_the_callers_session(self) -> None:
+        with mock.patch("herdr_orch.cli.ensure_orch_session") as ensure, \
+                mock.patch("herdr_orch.cli.start", return_value=True) as seat_orch:
+            _start(self.topic, self.state, self.herdr, "/x", True, None)
+        ensure.assert_not_called()
+        self.assertIsNone(seat_orch.call_args.kwargs["orch"])
+
+    def test_show_needs_a_detached_orchestrator(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            env = {"HERDR_ORCH_CONFIG": str(root / "cfg"), "HERDR_ORCH_STATE": str(root / "state")}
+            main(["init", "waki"], env=env, adapter=FakeHerdr())
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(main(["show", "waki"], env=env, adapter=FakeHerdr()), 1)
+            self.assertIn("own herdr session", err.getvalue())

@@ -31,7 +31,7 @@ from herdr_orch.reconcile import reconcile
 from herdr_orch.runner import Runner
 from herdr_orch.github import CliGitHub
 from herdr_orch.ledger import status_rows, status_table
-from herdr_orch.seating import ensure_link, ensure_runner, release, seat, session_herdr, start, validated
+from herdr_orch.seating import ORCH_SESSION, ensure_link, ensure_orch_session, ensure_runner, orch_herdr, release, seat, session_herdr, start, validated
 from herdr_orch.state import TopicState, find_managed, pid_alive, state_root
 from herdr_orch.supervisor import Supervisor
 from herdr_orch.topics import Answers, Topic, parse_notify, config_root, init_topic, load_topic, load_topics, topic_for
@@ -79,7 +79,7 @@ def _terminal_ask(question: str, default: str) -> str:
 
 
 def _setup(configs: Path, states: Path, herdr: Herdr, env: Mapping[str, str], repo_root: str,
-           name: str | None = None, then_start: bool = True) -> int:
+           name: str | None = None, then_start: bool = True, detach: bool = True) -> int:
     """The wizard in a terminal: ask, write the Topic, send a test alert, then start its Orchestrator."""
     home = env.get("HOME") or str(Path.home())
     print(f"No Topic covers {repo_root} yet. Press Enter to take each suggestion.")
@@ -102,7 +102,27 @@ def _setup(configs: Path, states: Path, herdr: Herdr, env: Mapping[str, str], re
     print(f"Wrote {topic.dir}")
     if not then_start:
         return 0
-    return 0 if start(topic, TopicState(states, topic.name), herdr, CLI) else 1
+    return 0 if _start(topic, TopicState(states, topic.name), herdr, CLI, detach, env.get("HERDR_SOCKET_PATH") or None) else 1
+
+
+def _start(topic: Topic, state: TopicState, herdr: Herdr, cli: str, detach: bool, caller_socket: str | None = None) -> bool:
+    """Start the Topic's Orchestrator. With `detach` and a known Topic socket it runs in the detached `orch`
+    session, out of the user's sidebar; one already running in the Topic's session stays where it is."""
+    if state.socket() is None and caller_socket:
+        state.record_socket(caller_socket)  # before the runner spawns: it reads this
+    orch: Herdr | None = None
+    if detach and state.socket() and not any(a.name == topic.orchestrator for a in herdr.agents()):
+        if not state.orch_socket():
+            state.record_orch_socket(ensure_orch_session())
+        orch = CliHerdr(socket=state.orch_socket())
+    elif state.orch_socket():
+        orch = CliHerdr(socket=state.orch_socket())
+    return start(topic, state, herdr, cli, orch=orch)
+
+
+def _orch(state: TopicState, herdr: Herdr, adapter: Herdr | None) -> Herdr:
+    """The herdr the Topic's Orchestrator is reached through (the Topic's own for a test adapter)."""
+    return herdr if adapter is not None else orch_herdr(state, herdr, lambda sock: CliHerdr(socket=sock))
 
 
 def main(
@@ -157,6 +177,7 @@ def main(
     status_cmd = sub.add_parser("status", help="print the branch ledger: every tracked branch and untracked open PR")
     status_cmd.add_argument("topic")
     status_cmd.add_argument("--json", action="store_true", help="rows as JSON, for scripts")
+    sub.add_parser("show", help="attach to a Topic's Orchestrator, which runs in a detached herdr session").add_argument("topic")
     sub.add_parser("reconcile", help="adopt live worktrees, drop dead Registry entries, compact the Inbox").add_argument("topic")
     sub.add_parser("watch", help="run a Topic's Watch runner").add_argument("topic")
     sub.add_parser("setup", help="the setup wizard for this repo's Topic, then start its Orchestrator")
@@ -190,7 +211,7 @@ def main(
         if answers is None and sys.stdin.isatty():
             repo = _checkout_root()
             if repo:
-                return _setup(configs, states, herdr, env, repo, name=args.topic, then_start=False)
+                return _setup(configs, states, herdr, env, repo, name=args.topic, then_start=False, detach=adapter is None)
         try:
             print(init_topic(configs, args.topic, answers))
         except (ValueError, FileExistsError) as e:
@@ -207,7 +228,10 @@ def main(
 
         os.environ.setdefault("ESCDELAY", "25")  # curses waits a full second after Esc otherwise
         scope = env.get(SCOPE_ENV) or None
-        curses.wrapper(App(states, topics, herdr, scope=scope).run)
+        def reach(topic: Topic) -> Herdr:
+            return orch_herdr(TopicState(states, topic.name), herdr, lambda sock: CliHerdr(socket=sock))
+
+        curses.wrapper(App(states, topics, herdr, scope=scope, orch_herdr=reach).run)
         return 0
     if args.cmd in ("take", "give-back"):
         try:
@@ -230,7 +254,7 @@ def main(
                 print("not in a git repo, and herdr names no workspace repo", file=sys.stderr)
                 return 2
             if args.cmd == "setup" or sys.stdin.isatty():
-                return _setup(configs, states, herdr, env, repo)
+                return _setup(configs, states, herdr, env, repo, detach=adapter is None)
             herdr.open_setup(repo)  # a plugin action: no terminal here, so ask in a popup
             print(f"No Topic covers {repo}: opened the setup wizard.")
             return 0
@@ -268,10 +292,12 @@ def main(
             return 0 if is_deployed(args.sha, plugins_dir(env, home), state) else 1
         elif args.cmd == "start":
             home = env.get("HOME") or str(Path.home())
-            if state.socket() is None and caller_socket:
-                state.record_socket(caller_socket)  # before the runner spawns: it reads this
-            if not start(topic, state, herdr, ensure_link(CLI, home, plugins_dir(env, home))):
+            if not _start(topic, state, herdr, ensure_link(CLI, home, plugins_dir(env, home)), adapter is None, caller_socket):
                 return 1
+        elif args.cmd == "show":
+            if not state.orch_socket():
+                raise RuntimeError(f"Topic {topic.name}'s Orchestrator runs in the Topic's own herdr session: open its orch-{topic.name} workspace there")
+            os.execvp(CliHerdr().binary, [CliHerdr().binary, "session", "attach", ORCH_SESSION])
         elif args.cmd == "inbox":
             pane = next((p for p, n in state.managed().items() if n == args.agent), None) or next(
                 (a.pane_id for a in herdr.agents() if a.name == args.agent), None)
@@ -285,7 +311,7 @@ def main(
             elif not args.text:
                 raise ValueError("give the answer text, or --dismiss to close the item without one")
             else:
-                print(f"answered {args.item_id}: sent to {answer(states, row, args.text, herdr, topic.orchestrator)}")
+                print(f"answered {args.item_id}: sent to {answer(states, row, args.text, _orch(state, herdr, adapter) if row.to == 'orchestrator' else herdr, topic.orchestrator)}")
         elif args.cmd == "seat":
             seated = seat(topic, state, herdr, args.workspace, args.branch, args.label, env.get("HOME"),
                           existing=args.existing, now=now, name=args.name,
@@ -301,7 +327,7 @@ def main(
         elif args.cmd == "reconcile":
             print(reconcile(topic, state, herdr, now(), home=env.get("HOME")).summary())
         elif args.cmd == "watch":
-            _watch(topic, state, herdr, now, env)
+            _watch(topic, state, herdr, now, env, _orch(state, herdr, adapter))
     except (ValueError, RuntimeError, TimeoutError, subprocess.CalledProcessError) as e:
         print(e, file=sys.stderr)
         return 1
@@ -340,6 +366,11 @@ def _reexec_if_updated(topic: Topic, env: Mapping[str, str], watches: Supervisor
     os.execve(link, [link, "watch", topic.name], {k: v for k, v in os.environ.items() if k != "PYTHONPATH"})
 
 
+def _orch_up(topic: Topic, orch: Herdr | None) -> bool | None:
+    """Whether the Orchestrator is running in its detached session; None when it shares the Topic's."""
+    return None if orch is None else any(a.name == topic.orchestrator for a in orch.agents())
+
+
 def _other_runner(state: TopicState, at: float) -> int | None:
     """The pid of another live runner with a fresh runner file, if the file names one."""
     existing = state.runner_status()
@@ -349,7 +380,7 @@ def _other_runner(state: TopicState, at: float) -> int | None:
 
 
 def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], float],
-           env: Mapping[str, str] = os.environ) -> None:
+           env: Mapping[str, str] = os.environ, orch: Herdr | None = None) -> None:
     """Runs until stopped, or until its Orchestrator has been gone a grace period. herdr requires
     plugins to stop their children on exit, so SIGTERM and SIGHUP stop the Watches too."""
     other = _other_runner(state, now())
@@ -362,10 +393,10 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
     def say(line: str) -> None:
         print(line, flush=True)
 
-    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say, CliGitHub())
+    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say, CliGitHub(), orch)
     say(f"Watch runner: topic {topic.name}")
     try:
-        say(f"reconciled: {reconcile(topic, state, herdr, now()).summary()}")
+        say(f"reconciled: {reconcile(topic, state, herdr, now(), orchestrator_up=_orch_up(topic, orch)).summary()}")
     except Exception:
         traceback.print_exc()  # stale records are no reason to skip watching
     try:

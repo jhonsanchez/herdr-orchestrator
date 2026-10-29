@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import signal
@@ -271,10 +272,55 @@ def session_herdr(topic: Topic, state: TopicState, caller_socket: str | None,
     if recorded is None or caller_socket in (None, recorded):
         return make(recorded or caller_socket)
     herdr = make(recorded)
-    if not any(a.name == topic.orchestrator for a in herdr.agents()):
+    if not any(a.name == topic.orchestrator for a in orch_herdr(state, herdr, make).agents()):
         raise RuntimeError(f"Topic {topic.name}'s Orchestrator lives in the herdr session at {recorded}, "
                            f"and it is not running there: start it from that session")
     return herdr
+
+
+ORCH_SESSION = "orch"  # the detached herdr session every Orchestrator runs in, one workspace per Topic
+ORCH_DIALOG_ID = "orch-dialog"
+SESSION_WAIT_S = 15.0
+
+
+def ensure_orch_session(
+    name: str = ORCH_SESSION,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    popen: Callable[..., object] = subprocess.Popen,
+    sleep: Callable[[float], None] = time.sleep,
+    binary: str | None = None,
+) -> str:
+    """The socket of the named herdr session, started headless (no client, nothing in the user's sidebar)
+    when it is not running. herdr picks its session by HERDR_SESSION, so the caller's own session
+    variables are dropped from the server's environment."""
+    herdr = binary or os.environ.get("HERDR_BIN_PATH") or "herdr"
+
+    def socket_of() -> str | None:
+        out = run([herdr, "session", "list", "--json"], capture_output=True, text=True)
+        for row in json.loads(out.stdout or "{}").get("sessions", []):
+            if row.get("name") == name and row.get("running"):
+                return str(row["socket_path"])
+        return None
+
+    found = socket_of()
+    if found:
+        return found
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_") or k == "HERDR_BIN_PATH"}
+    popen([herdr, "server"], env={**env, "HERDR_SESSION": name}, stdin=subprocess.DEVNULL,
+          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(int(SESSION_WAIT_S * 4)):
+        found = socket_of()
+        if found:
+            return found
+        sleep(0.25)
+    raise RuntimeError(f"the herdr session {name} did not come up")
+
+
+def orch_herdr(state: TopicState, herdr: Herdr, make: Callable[[str | None], Herdr]) -> Herdr:
+    """The herdr the Topic's Orchestrator is reached through: its detached session when `start` put it
+    there, else the Topic's own session (an Orchestrator started before it moved)."""
+    recorded = state.orch_socket()
+    return make(recorded) if recorded else herdr
 
 
 def start(
@@ -284,33 +330,56 @@ def start(
     cli: str,
     say: Callable[[str], None] = _stderr,
     spawn: Callable[[str, Topic, TopicState], None] = spawn_runner,
+    orch: Herdr | None = None,
 ) -> bool:
-    """Seat the Orchestrator in its own workspace with the Attention pane beside it, and the
-    Watch runner running in the background. False when its startup dialog was never answered,
-    so it was not briefed."""
+    """Seat the Orchestrator and the Watch runner. `orch` is the herdr of the detached session the
+    Orchestrator runs in: its workspace is made there, so nothing is added to the Topic's session,
+    and its shell is pointed at the Topic's socket so every herdr call it makes reaches the Topic.
+    Without it the Orchestrator takes its own workspace in `herdr`'s session, with the Attention
+    pane beside it. False when its startup dialog was never answered, so it was not briefed."""
     name = topic.orchestrator
     cmd = _orchestrator_cmd(cli, topic, state)
-    seated = next((a for a in herdr.agents() if a.name == name), None)
+    home = orch if orch is not None else herdr
+    seated = next((a for a in home.agents() if a.name == name), None)
     if seated is not None:
         # A runner killed since (a plugin update, a crash) is respawned here; a no-op while one is alive.
         spawn(cli, topic, state)
         if state.briefed.exists():
             return True
         # A start that died after seating the Orchestrator left it unbriefed: finish the job.
-        return _brief(topic, state, herdr, cmd, seated.pane_id, True, say)
+        return _brief_reporting(topic, state, home, cmd, seated.pane_id, True, say, orch is not None)
     if not topic.has_yours_alone():
         raise ValueError(f"{topic.playbook_path} needs a '## Yours alone' section before its Orchestrator starts")
-    if any(w.label == name for w in herdr.workspaces()):
+    if any(w.label == name for w in home.workspaces()):
         raise RuntimeError(f"workspace {name} is open without its Orchestrator: close it, then start again")
     state.ensure()
     state.clear_briefed()
-    workspace_id, root_pane = herdr.workspace_create(str(topic.dir), name)
+    workspace_id, root_pane = home.workspace_create(str(topic.dir), name)
+    if orch is not None and state.socket():
+        # Its own session's variables point at the orch session: every herdr call it makes goes to the Topic's.
+        home.pane_run(root_pane, f"export HERDR_SOCKET_PATH={shlex.quote(str(state.socket()))}")
     model = topic.orchestrator_model or topic.model
-    started = herdr.agent_start(name, root_pane, ["--model", model] if model else [])
+    started = home.agent_start(name, root_pane, ["--model", model] if model else [])
     # The runner comes second: before the Orchestrator exists, it would report the Topic Unattended.
     spawn(cli, topic, state)
-    herdr.attention_open(workspace_id, root_pane, topic.name)
-    return _brief(topic, state, herdr, cmd, root_pane, started, say)
+    if orch is None:
+        herdr.attention_open(workspace_id, root_pane, topic.name)
+    return _brief_reporting(topic, state, home, cmd, root_pane, started, say, orch is not None)
+
+
+def _brief_reporting(topic: Topic, state: TopicState, home: Herdr, cmd: str, pane: str, started: bool,
+                     say: Callable[[str], None], detached: bool) -> bool:
+    """`_brief`, and for a detached Orchestrator, an Inbox item while it waits at a startup dialog
+    (the user cannot see its pane): the Attention pane shows it with the command that opens the session."""
+    if detached and not started:
+        state.escalate(topic.orchestrator, pane, "permission",
+                       f"{topic.orchestrator} waits at a startup dialog (folder trust). "
+                       f"Answer it: herdr-orch show {topic.name}  (herdr session attach {ORCH_SESSION})",
+                       [], time.time(), to="agent", item_id=ORCH_DIALOG_ID)
+    briefed = _brief(topic, state, home, cmd, pane, started, say)
+    if detached and briefed:
+        state.resolve(ORCH_DIALOG_ID, "resolved")
+    return briefed
 
 
 def ensure_link(cli: str, home: str, plugins: Path | None = None) -> str:

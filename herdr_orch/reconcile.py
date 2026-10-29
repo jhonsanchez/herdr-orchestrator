@@ -60,12 +60,13 @@ def reconcile(
     now: float,
     branch_of: Callable[[str], str | None] = checked_out_branch,
     home: str | None = None,
+    orchestrator_up: bool | None = None,
 ) -> Reconciled:
     """Rebuild missing branch records from the Topic's live worktrees, drop Registry entries whose
     agent is gone, and compact the Inbox by id. Safe to repeat: a second pass changes nothing."""
     agents = herdr.agents()
     dropped = []
-    refused = _drop_refusal(topic, state, agents)
+    refused = _drop_refusal(topic, state, agents, orchestrator_up)
     for pane, name in ({} if refused else state.managed()).items():
         if not any(a.name == name and a.pane_id == pane for a in agents):
             state.give_back(pane)
@@ -115,14 +116,16 @@ def reconcile(
     return Reconciled(adopted, dropped, state.compact_inbox(), switched, swept, registered, unregistered, refused)
 
 
-def _drop_refusal(topic: Topic, state: TopicState, agents: list[Agent]) -> str | None:
+def _drop_refusal(topic: Topic, state: TopicState, agents: list[Agent], orchestrator_up: bool | None = None) -> str | None:
     """Why the Registry must not be pruned now: herdr shows none of the Topic's agents (likely the wrong
     session, #108), or most of a sizeable Registry is missing at once. None when pruning is sane."""
     managed = state.managed()
     if not managed:
         return None
     visible = sum(1 for pane, name in managed.items() if any(a.name == name and a.pane_id == pane for a in agents))
-    if visible == 0 and not any(a.name == topic.orchestrator for a in agents):
+    if orchestrator_up is None:  # an Orchestrator in this session; a detached one is reported by the caller
+        orchestrator_up = any(a.name == topic.orchestrator for a in agents)
+    if visible == 0 and not orchestrator_up:
         return f"this herdr session shows none of the {len(managed)} Managed agents nor {topic.orchestrator}"
     missing = len(managed) - visible
     if len(managed) >= 3 and missing * 2 > len(managed):
