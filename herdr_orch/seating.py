@@ -385,6 +385,9 @@ def start(
     and its shell is pointed at the Topic's socket so every herdr call it makes reaches the Topic.
     Without it the Orchestrator takes its own workspace in `herdr`'s session, with the Attention
     pane beside it. False when its startup dialog was never answered, so it was not briefed."""
+    if topic.deploy_check and not topic.github_on:
+        raise ValueError(f"{topic.name} sets deploy_check but has no [github] table: add an empty [github] table "
+                         f"to {topic.dir / 'topic.toml'} (the deploy gate follows merged PRs)")
     name = topic.orchestrator
     cmd = _orchestrator_cmd(cli, topic, state)
     home = orch if orch is not None else herdr
@@ -453,6 +456,14 @@ def _orchestrator_cmd(cli: str, topic: Topic, state: TopicState) -> str:
     return f"{roots} {shlex.quote(cli)}"
 
 
+_CORE_BRIEF = ("This Topic has no GitHub Integration: an agent signals it is validated with a validated Event, "
+               "and you run release for its branch yourself once the playbook's steps are done. ")
+_GITHUB_BRIEF = ("When a PR event says its checks are green, merge it if the playbook lets you merge (how is the "
+                 "playbook's to say), then release its branch; if the playbook keeps merging Yours alone, put it in "
+                 "the Inbox with a recommended answer. When checks fail, prompt the PR's agent with the failure. "
+                 "Releases of validated, merged branches are done by the Watch runner. ")
+
+
 def _brief(topic: Topic, state: TopicState, herdr: Herdr, cmd: str, pane: str, started: bool,
            say: Callable[[str], None]) -> bool:
     """Send the Orchestrator its playbook prompt once it is ready, and mark it briefed."""
@@ -463,9 +474,8 @@ def _brief(topic: Topic, state: TopicState, herdr: Herdr, cmd: str, pane: str, s
         name,
         f"You are the Orchestrator for topic {topic.name}. Read the playbook at {topic.playbook_path} "
         "and follow it; its Yours alone section is never yours to decide. New events arrive as prompts "
-        "from herdr-orchestrator. When a PR event says its checks are green, merge it with gh pr merge if the "
-        "playbook lets you merge (then release its branch); if the playbook keeps merging Yours alone, put it in "
-        "the Inbox with a recommended answer. When checks fail, prompt the PR's agent with the failure. "
+        "from herdr-orchestrator. "
+        f"{_GITHUB_BRIEF if topic.github_on else _CORE_BRIEF}"
         f"Answer an agent's Inbox question with: {cmd} answer {topic.name} <item-id> <text>, never a bare herdr agent prompt "
         f"(it closes the item); close an item that events made moot with: {cmd} answer {topic.name} <item-id> --dismiss, "
         "and resolve the Orchestrator-raised items you settle yourself the same way. "
@@ -478,7 +488,7 @@ def _brief(topic: Topic, state: TopicState, herdr: Herdr, cmd: str, pane: str, s
     return True
 
 
-def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str, now: float | None = None,
+def release(state: TopicState, herdr: Herdr, github: GitHub | None, branch: str, now: float | None = None,
             reason: str | None = None) -> None:
     """Clean up a branch: workspace, worktree (which ends its agent), Registry entry and tracking,
     once its PR is merged or closed. An open PR keeps them: its agent, or its next one, still
@@ -486,7 +496,7 @@ def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str, now: f
     record = state.branch_record(branch)
     if record is None:
         raise ValueError(f"{branch} is not tracked in Topic {state.topic}")
-    if record.get("repo_root"):
+    if github is not None and record.get("repo_root"):
         pr = github.pr_for_branch(str(record["repo_root"]), branch)  # RuntimeError if GitHub cannot say: keep it
         if pr is not None and pr.state == "open":
             raise RuntimeError(f"PR #{pr.number} for {branch} is still open: close or merge it first")
@@ -514,7 +524,7 @@ def release(state: TopicState, herdr: Herdr, github: GitHub, branch: str, now: f
                 state.resolve(str(item["id"]), "dismissed")
 
 
-def validated(state: TopicState, branch: str, now: float, evidence: str, deploy_gate: bool = False) -> None:
+def validated(state: TopicState, branch: str, now: float, evidence: str, deploy_gate: bool = False, pr_gated: bool = True) -> None:
     """The agent's signal that its work is validated: the Orchestrator hears of it as an Event
     carrying the evidence of the check, and releases the branch once its PR is merged or closed."""
     evidence = evidence.strip()
@@ -523,9 +533,9 @@ def validated(state: TopicState, branch: str, now: float, evidence: str, deploy_
     record = state.branch_record(branch)
     if record is None:
         raise ValueError(f"{branch} is not tracked in Topic {state.topic}")
-    if record.get("pr_state") != "merged":
+    if pr_gated and record.get("pr_state") != "merged":
         raise ValueError(f"{branch} cannot be validated yet: its PR is not merged. Wait for the merge and the deploy prompt, then validate.")
-    if deploy_gate and not record.get("deployed"):
+    if pr_gated and deploy_gate and not record.get("deployed"):
         raise ValueError(f"{branch} cannot be validated yet: its merge is not deployed. Wait for the deploy prompt, then validate.")
     state.mark_validated(branch, now, evidence)
     state.append_event("validated", f"{branch} is validated: {' '.join(evidence.split())[:300]}", now)

@@ -12,7 +12,12 @@
 # Command that sends you a push: gets "<title>\n<body>" on stdin. Default: none.
 # notify_command = ["ntfy-send"]
 
-# Deploy gate: after a PR merges, the agent is prompted to validate only once this command
+# GitHub Integration: opt in with a [github] table (empty is fine). It owns PR following, the branch
+# ledger, the deploy gate and PR-gated `release`/`validated`. Absent: no gh call anywhere, `validated`
+# needs only --evidence, the Orchestrator runs `release`, and nothing is released automatically.
+# [github]
+
+# Deploy gate (needs [github]): after a PR merges, the agent is prompted to validate only once this command
 # exits 0. It gets HERDR_ORCH_MERGE_SHA, HERDR_ORCH_TOPIC, HERDR_ORCH_REPO_ROOT and
 # HERDR_ORCH_BRANCH; ~ is expanded. Empty (the default): no gate. For this plugin's own repo:
 # deploy_check = ["~/.local/bin/herdr-orch", "deployed"]

@@ -10,3 +10,7 @@ The Orchestrator never decides these. Each goes to the user's Inbox with a recom
 - Production: deploys, promotions, cut-overs.
 - Secrets and credentials: creating, granting, rotating.
 - Merging, unless this playbook says otherwise.
+
+## Merging
+
+How this Topic's Orchestrator merges a green PR, when it may. Fill in the command (for example `gh pr merge <n> --squash`), or delete this section if merging stays Yours alone.

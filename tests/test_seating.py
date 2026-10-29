@@ -370,6 +370,38 @@ class SeatingTest(unittest.TestCase):
         start(self.topic, self.state, self.herdr, cli="/opt/plug/bin/herdr-orch", spawn=self.spawn)
         self.assertEqual(self.herdr.calls, [("spawn",)])
 
+    def test_start_refuses_a_deploy_check_without_a_github_table(self) -> None:
+        self.write_playbook()
+        topic = Topic(name="zebra", dir=self.topic.dir, deploy_check=["true"])
+        with self.assertRaisesRegex(ValueError, r"\[github\]"):
+            start(topic, self.state, self.herdr, cli="/x", spawn=self.spawn)
+        self.assertEqual(self.herdr.calls, [])
+
+    def test_the_start_prompt_has_the_github_paragraph_only_with_a_github_table(self) -> None:
+        self.write_playbook()
+        start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn)
+        (off,) = [str(c[2]) for c in self.herdr.of("prompt")]
+        self.assertNotIn("PR event", off)
+        self.assertNotIn("gh pr merge", off)
+        herdr = FakeHerdr()
+        topic = Topic(name="zebra", dir=self.topic.dir, github={})
+        start(topic, TopicState(Path(self.tmp.name) / "state2", "zebra"), herdr, cli="/x", spawn=self.spawn)
+        (on,) = [str(c[2]) for c in herdr.of("prompt")]
+        self.assertIn("PR event", on)
+        self.assertNotIn("gh pr merge", on)
+
+    def test_validated_without_github_needs_only_evidence(self) -> None:
+        self.state._write_branch({"branch": "issue-1", "agent": "a1"})
+        seating.validated(self.state, "issue-1", 5.0, "ran it", pr_gated=False)
+        self.assertTrue(any(e.source == "validated" for e in self.state.events_since(0)))
+        with self.assertRaises(ValueError):
+            seating.validated(self.state, "issue-1", 6.0, " ", pr_gated=False)
+
+    def test_release_without_github_makes_no_pr_check(self) -> None:
+        self.state._write_branch({"branch": "issue-1", "agent": "a1", "repo_root": "/r"})
+        seating.release(self.state, self.herdr, None, "issue-1")
+        self.assertIsNone(self.state.branch_record("issue-1"))
+
 
 if __name__ == "__main__":
     unittest.main()

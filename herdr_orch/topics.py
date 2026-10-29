@@ -51,6 +51,7 @@ class Topic:
     notify: str = "none"  # stop-hook | herdr | none; a notify_command wins over it
     deploy_check: list[str] = field(default_factory=list)  # exit 0 once a merge is deployed; empty: no gate
     validate: str = ""  # what "validated" means for this Topic; sent to the agent with the deploy prompt
+    github: dict[str, str] | None = None  # the [github] table: its presence turns the GitHub Integration on
     heartbeat_window_min: int = 15
     stale_min: int = 40
     hung_min: int = 60
@@ -59,6 +60,11 @@ class Topic:
     @property
     def config_root(self) -> Path:
         return self.dir.parent.parent
+
+    @property
+    def github_on(self) -> bool:
+        """The GitHub Integration is on when topic.toml has a [github] table, even an empty one."""
+        return self.github is not None
 
     @property
     def orchestrator(self) -> str:

@@ -325,10 +325,10 @@ def main(
                                           plugins_dir(env, env.get("HOME") or str(Path.home()))))
             print(f"{seated.name} {seated.pane_id}")
         elif args.cmd == "release":
-            release(state, herdr, CliGitHub(), args.branch)
+            release(state, herdr, CliGitHub() if topic.github_on else None, args.branch)
             print(f"{args.branch} released")
         elif args.cmd == "validated":
-            validated(state, args.branch, now(), args.evidence, bool(topic.deploy_check))
+            validated(state, args.branch, now(), args.evidence, bool(topic.deploy_check), topic.github_on)
             print(f"{args.branch} marked validated")
         elif args.cmd == "reconcile":
             print(reconcile(topic, state, herdr, now(), home=env.get("HOME")).summary())
@@ -399,7 +399,8 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
     def say(line: str) -> None:
         print(line, flush=True)
 
-    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say, CliGitHub(), orch)
+    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say, CliGitHub() if topic.github_on else None, orch,
+                    str(Path(env.get("HOME") or Path.home()) / ".local" / "bin" / "herdr-orch"))
     say(f"Watch runner: topic {topic.name}")
     try:
         say(f"reconciled: {reconcile(topic, state, herdr, now(), orchestrator_up=_orch_up(topic, orch)).summary()}")

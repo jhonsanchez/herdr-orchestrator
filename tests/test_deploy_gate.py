@@ -88,7 +88,7 @@ class DeployGateTest(unittest.TestCase):
         runner.tick(1)
         runner.tick(1 + DEPLOY_POLL_SECONDS)
         (text,) = [t for t in self.told() if "deployed" in t]
-        self.assertIn("installed plugin is at abc123de", text)
+        self.assertNotIn("installed plugin", text)
         self.assertIn("Run the plugin's tests.", text)
         self.assertIn("herdr-orch validated waki --branch issue-1", text)
         self.assertIn("--evidence", text)
