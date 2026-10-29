@@ -362,8 +362,7 @@ def _reexec_if_updated(topic: Topic, env: Mapping[str, str], watches: Supervisor
         return
     link = ensure_link(CLI, home, plugins)
     print(f"newer install found: restarting the Watch runner from {Path(link).resolve()}", flush=True)
-    watches.stop()
-    state.clear_runner(os.getpid())
+    watches.stop()  # the runner file stays: the pid survives execve, and `start`/`heartbeat` must still see it
     os.execve(link, [link, "watch", topic.name], {k: v for k, v in os.environ.items() if k != "PYTHONPATH"})
 
 
@@ -372,13 +371,21 @@ def _orch_up(topic: Topic, orch: Herdr | None) -> bool | None:
     return None if orch is None else any(a.name == topic.orchestrator for a in orch.agents())
 
 
+def _other_runner(state: TopicState, at: float) -> int | None:
+    """The pid of another live runner with a fresh runner file, if the file names one."""
+    existing = state.runner_status()
+    if existing and existing.pid != os.getpid() and at - existing.at < RUNNER_STALE_S and _alive(existing.pid):
+        return existing.pid
+    return None
+
+
 def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], float],
            env: Mapping[str, str] = os.environ, orch: Herdr | None = None) -> None:
     """Runs until stopped, or until its Orchestrator has been gone a grace period. herdr requires
     plugins to stop their children on exit, so SIGTERM and SIGHUP stop the Watches too."""
-    existing = state.runner_status()
-    if existing and existing.pid != os.getpid() and now() - existing.at < RUNNER_STALE_S and _alive(existing.pid):
-        print(f"a Watch runner for {topic.name} is already running (pid {existing.pid})", file=sys.stderr)
+    other = _other_runner(state, now())
+    if other:
+        print(f"a Watch runner for {topic.name} is already running (pid {other})", file=sys.stderr)
         return
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGHUP, _stop)
@@ -395,6 +402,10 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
     try:
         ticks = 0
         while True:
+            other = _other_runner(state, now())
+            if other:  # the file has one owner; leave it and its state to that runner
+                say(f"a Watch runner for {topic.name} owns the runner file (pid {other}): exiting")
+                break
             try:
                 runner.tick(now())
                 ticks += 1

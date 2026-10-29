@@ -10,6 +10,7 @@ from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from herdr_orch import cli
 from herdr_orch.cli import _start, main, resolve_topic
 from herdr_orch.herdr import Agent, Workspace
 from herdr_orch.notify import notifier
@@ -223,6 +224,72 @@ class RunnerDownTest(unittest.TestCase):
         out = self.run_cmd("status", "waki")
         self.assertEqual(self.spawned, 0)
         self.assertIn("Watch runner for waki is not running", out)
+
+
+class RunnerOwnershipTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.state = TopicState(self.root / "state", "t")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_reexec_keeps_the_runner_file(self) -> None:
+        self.state.record_runner(os.getpid(), 1000.0, 3)
+        watches = mock.Mock()
+        with mock.patch.object(cli, "newer_install", return_value=True), \
+                mock.patch.object(cli, "ensure_link", return_value="/x/herdr-orch"), \
+                mock.patch("os.execve") as execve:
+            cli._reexec_if_updated(mock.Mock(), {"HOME": str(self.root)}, watches, self.state)
+        execve.assert_called_once()
+        status = self.state.runner_status()
+        assert status is not None
+        self.assertEqual(status.pid, os.getpid())
+
+    def test_another_live_fresh_pid_in_the_file_means_superseded(self) -> None:
+        self.state.record_runner(4242, 990.0, 1)
+        with mock.patch.object(cli, "_alive", return_value=True):
+            self.assertEqual(cli._other_runner(self.state, 1000.0), 4242)
+
+    def test_own_dead_or_stale_pids_do_not_supersede(self) -> None:
+        self.state.record_runner(os.getpid(), 990.0, 1)
+        self.assertIsNone(cli._other_runner(self.state, 1000.0))
+        self.state.record_runner(4242, 990.0, 1)
+        with mock.patch.object(cli, "_alive", return_value=False):
+            self.assertIsNone(cli._other_runner(self.state, 1000.0))
+        self.state.record_runner(4242, 100.0, 1)
+        with mock.patch.object(cli, "_alive", return_value=True):
+            self.assertIsNone(cli._other_runner(self.state, 1000.0))
+
+    def test_a_runner_exits_when_another_takes_the_file_and_leaves_it_alone(self) -> None:
+        ticks: list[float] = []
+        state = self.state
+
+        class TakenOver:
+            done = False
+
+            def __init__(self, *args: object) -> None:
+                pass
+
+            def tick(self, at: float) -> None:
+                ticks.append(at)
+                state.record_runner(4242, at, 1)  # a second runner wins the file
+
+        topic = mock.Mock()
+        topic.name = "t"
+        topic.watches_dir = self.root / "watches"
+        with mock.patch.object(cli, "Runner", TakenOver), mock.patch.object(cli, "reconcile"), \
+                mock.patch.object(cli, "notifier_for"), mock.patch.object(cli, "CliGitHub"), \
+                mock.patch.object(cli, "_alive", return_value=True), \
+                mock.patch.object(cli, "_reexec_if_updated"), mock.patch("time.sleep"), \
+                mock.patch("signal.signal"), redirect_stdout(io.StringIO()) as out:
+            cli._watch(topic, self.state, mock.Mock(), lambda: 1000.0, {})
+        self.assertEqual(len(ticks), 1)
+        self.assertIn("4242", out.getvalue())
+        status = self.state.runner_status()
+        assert status is not None
+        self.assertEqual(status.pid, 4242)
 
 
 class DetachedStartTest(unittest.TestCase):

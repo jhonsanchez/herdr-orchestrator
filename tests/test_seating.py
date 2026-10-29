@@ -414,6 +414,13 @@ class RunnerRespawnTest(unittest.TestCase):
         stop.assert_called_once_with(4242, "waki")
         self.assertEqual(len(self.spawned), 1)
 
+    def test_a_runner_briefly_stale_during_a_reexec_is_left_alone(self) -> None:
+        self.state.record_runner(4242, 910.0, 5)  # 90s: past stale, inside the grace period
+        with mock.patch.object(seating, "_stop_wedged") as stop:
+            self.assertFalse(self.ensure(alive=True))
+        stop.assert_not_called()
+        self.assertEqual(self.spawned, [])
+
     def test_spawn_gives_the_runner_the_topics_recorded_socket(self) -> None:
         self.state.record_socket("/run/waki.sock")
         with mock.patch("subprocess.Popen") as popen:
