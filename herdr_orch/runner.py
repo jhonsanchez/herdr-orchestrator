@@ -62,7 +62,9 @@ class Runner:
         say: Callable[[str], None] = lambda line: None,
         github: GitHub | None = None,
         orch_herdr: Herdr | None = None,
+        cli: str = "~/.local/bin/herdr-orch",
     ) -> None:
+        self.cli = cli
         self.topic, self.state, self.herdr, self.watches, self.notify = topic, state, herdr, watches, notify
         # The session the Orchestrator runs in: the Topic's own unless it was started detached.
         self.orch_herdr = orch_herdr if orch_herdr is not None else herdr
@@ -370,8 +372,8 @@ class Runner:
             name = str(branch["branch"])
             sha = str(branch["merge_sha"])[:8]
             if str(branch.get("agent")) in agents:
-                text = (f"Your PR #{branch.get('pr')}'s merge ({sha}) is deployed. Validate it now: check that the installed plugin is at "
-                        f"{sha}. {self.topic.validate} Run `~/.local/bin/herdr-orch validated {self.topic.name} --branch {name} "
+                text = (f"Your PR #{branch.get('pr')}'s merge ({sha}) is deployed. Validate it now. "
+                        f"{self.topic.validate} Run `{self.cli} validated {self.topic.name} --branch {name} "
                         "--evidence '<what you ran and its last output>'` only after you have checked: an empty "
                         "evidence is refused.")
                 if not self._prompt(str(branch["agent"]), f"[herdr-orchestrator] {' '.join(text.split())}"):
