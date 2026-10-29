@@ -316,6 +316,54 @@ def ensure_orch_session(
     raise RuntimeError(f"the herdr session {name} did not come up")
 
 
+def stop_orch_session(
+    name: str = ORCH_SESSION,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    binary: str | None = None,
+) -> None:
+    """Stop the detached herdr session `ensure_orch_session` started."""
+    run([binary or os.environ.get("HERDR_BIN_PATH") or "herdr", "session", "stop", name],
+        capture_output=True, text=True)
+
+
+def bring_back(
+    topic: Topic,
+    state: TopicState,
+    orch: Herdr,
+    stop_session: Callable[[str], None] = stop_orch_session,
+    stop_runner: Callable[[int, str], None] = _stop_wedged,
+) -> None:
+    """Undo a detached start, so `start` reseats the Orchestrator in the Topic's own session: close its
+    workspace in the orch session, forget that session, and stop the runner watching it (its successor
+    must not defer to it). The orch session itself stops once no Orchestrator is left in it."""
+    seated = next((a for a in orch.agents() if a.name == topic.orchestrator), None)
+    if seated is not None:
+        orch.workspace_close(seated.workspace_id)
+    state.clear_orch_socket()
+    state.clear_briefed()
+    runner = state.runner_status()
+    if runner is not None:
+        stop_runner(runner.pid, topic.name)
+        state.clear_runner(runner.pid)
+    if not orch.agents():
+        stop_session(ORCH_SESSION)
+
+
+def session_name(socket: str | None) -> str | None:
+    """The herdr session a socket belongs to: `sessions/<name>/herdr.sock`, else the default one."""
+    if socket is None:
+        return None
+    path = Path(socket)
+    return path.parent.name if path.parent.parent.name == "sessions" else "default"
+
+
+def _where(topic: Topic, state: TopicState, workspace_id: str, detached: bool) -> str:
+    """Where the Orchestrator runs, for the line `start` always ends with."""
+    session = ORCH_SESSION if detached else session_name(state.socket())
+    where = f"workspace {workspace_id}" + (f" of herdr session {session}" if session else "")
+    return where + (f": herdr-orch show {topic.name}" if detached else "")
+
+
 def orch_herdr(state: TopicState, herdr: Herdr, make: Callable[[str | None], Herdr]) -> Herdr:
     """The herdr the Topic's Orchestrator is reached through: its detached session when `start` put it
     there, else the Topic's own session (an Orchestrator started before it moved)."""
@@ -344,6 +392,7 @@ def start(
     if seated is not None:
         # A runner killed since (a plugin update, a crash) is respawned here; a no-op while one is alive.
         spawn(cli, topic, state)
+        say(f"{name} was already running in {_where(topic, state, seated.workspace_id, orch is not None)}")
         if state.briefed.exists():
             return True
         # A start that died after seating the Orchestrator left it unbriefed: finish the job.
@@ -364,6 +413,7 @@ def start(
     spawn(cli, topic, state)
     if orch is None:
         herdr.attention_open(workspace_id, root_pane, topic.name)
+    say(f"{name} is running in {_where(topic, state, workspace_id, orch is not None)}")
     return _brief_reporting(topic, state, home, cmd, root_pane, started, say, orch is not None)
 
 

@@ -350,6 +350,9 @@ class TopicState:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.orch_socket_file.write_text(path + "\n")
 
+    def clear_orch_socket(self) -> None:
+        self.orch_socket_file.unlink(missing_ok=True)
+
     def orch_socket(self) -> str | None:
         try:
             return self.orch_socket_file.read_text().strip() or None

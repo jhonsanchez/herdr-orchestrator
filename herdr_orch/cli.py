@@ -31,7 +31,7 @@ from herdr_orch.reconcile import reconcile
 from herdr_orch.runner import Runner
 from herdr_orch.github import CliGitHub
 from herdr_orch.ledger import status_rows, status_table
-from herdr_orch.seating import ORCH_SESSION, ensure_link, ensure_orch_session, ensure_runner, orch_herdr, release, seat, session_herdr, start, validated
+from herdr_orch.seating import ORCH_SESSION, bring_back, ensure_link, ensure_orch_session, ensure_runner, orch_herdr, release, seat, session_herdr, start, validated
 from herdr_orch.state import TopicState, find_managed, pid_alive, state_root
 from herdr_orch.supervisor import Supervisor
 from herdr_orch.topics import Answers, Topic, parse_notify, config_root, init_topic, load_topic, load_topics, topic_for
@@ -79,7 +79,7 @@ def _terminal_ask(question: str, default: str) -> str:
 
 
 def _setup(configs: Path, states: Path, herdr: Herdr, env: Mapping[str, str], repo_root: str,
-           name: str | None = None, then_start: bool = True, detach: bool = True) -> int:
+           name: str | None = None, then_start: bool = True, detach: bool = False) -> int:
     """The wizard in a terminal: ask, write the Topic, send a test alert, then start its Orchestrator."""
     home = env.get("HOME") or str(Path.home())
     print(f"No Topic covers {repo_root} yet. Press Enter to take each suggestion.")
@@ -106,8 +106,9 @@ def _setup(configs: Path, states: Path, herdr: Herdr, env: Mapping[str, str], re
 
 
 def _start(topic: Topic, state: TopicState, herdr: Herdr, cli: str, detach: bool, caller_socket: str | None = None) -> bool:
-    """Start the Topic's Orchestrator. With `detach` and a known Topic socket it runs in the detached `orch`
-    session, out of the user's sidebar; one already running in the Topic's session stays where it is."""
+    """Start the Topic's Orchestrator in the Topic's own session. With `detach` and a known Topic socket it
+    runs in the detached `orch` session instead, out of the user's sidebar; one already running in the
+    Topic's session stays where it is. Without `detach`, one a detached start left in `orch` moves back."""
     if state.socket() is None and caller_socket:
         state.record_socket(caller_socket)  # before the runner spawns: it reads this
     orch: Herdr | None = None
@@ -116,7 +117,10 @@ def _start(topic: Topic, state: TopicState, herdr: Herdr, cli: str, detach: bool
             state.record_orch_socket(ensure_orch_session())
         orch = CliHerdr(socket=state.orch_socket())
     elif state.orch_socket():
-        orch = CliHerdr(socket=state.orch_socket())
+        if detach:
+            orch = CliHerdr(socket=state.orch_socket())
+        else:
+            bring_back(topic, state, CliHerdr(socket=state.orch_socket()))
     return start(topic, state, herdr, cli, orch=orch)
 
 
@@ -142,6 +146,8 @@ def main(
     init_cmd.add_argument("--yours-alone", action="append", metavar="ITEM", help="never decided by the Orchestrator (repeatable)")
     start_cmd = sub.add_parser("start", help="seat a Topic's Orchestrator (Topic from the workspace when omitted)")
     start_cmd.add_argument("topic", nargs="?")
+    start_cmd.add_argument("--detach", action="store_true",
+                           help="run the Orchestrator in the detached orch session, out of your sidebar (herdr-orch show opens it)")
     seat_cmd = sub.add_parser("seat", help="seat an agent on a branch")
     seat_cmd.add_argument("topic")
     seat_cmd.add_argument("--workspace", required=True)
@@ -211,7 +217,7 @@ def main(
         if answers is None and sys.stdin.isatty():
             repo = _checkout_root()
             if repo:
-                return _setup(configs, states, herdr, env, repo, name=args.topic, then_start=False, detach=adapter is None)
+                return _setup(configs, states, herdr, env, repo, name=args.topic, then_start=False)
         try:
             print(init_topic(configs, args.topic, answers))
         except (ValueError, FileExistsError) as e:
@@ -254,7 +260,7 @@ def main(
                 print("not in a git repo, and herdr names no workspace repo", file=sys.stderr)
                 return 2
             if args.cmd == "setup" or sys.stdin.isatty():
-                return _setup(configs, states, herdr, env, repo, detach=adapter is None)
+                return _setup(configs, states, herdr, env, repo)
             herdr.open_setup(repo)  # a plugin action: no terminal here, so ask in a popup
             print(f"No Topic covers {repo}: opened the setup wizard.")
             return 0
@@ -292,7 +298,7 @@ def main(
             return 0 if is_deployed(args.sha, plugins_dir(env, home), state) else 1
         elif args.cmd == "start":
             home = env.get("HOME") or str(Path.home())
-            if not _start(topic, state, herdr, ensure_link(CLI, home, plugins_dir(env, home)), adapter is None, caller_socket):
+            if not _start(topic, state, herdr, ensure_link(CLI, home, plugins_dir(env, home)), getattr(args, "detach", False), caller_socket):
                 return 1
         elif args.cmd == "show":
             if not state.orch_socket():

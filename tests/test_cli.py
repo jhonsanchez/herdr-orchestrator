@@ -319,6 +319,36 @@ class DetachedStartTest(unittest.TestCase):
         ensure.assert_not_called()
         self.assertIsNone(seat_orch.call_args.kwargs["orch"])
 
+    def test_start_stays_in_the_topics_session_unless_detached(self) -> None:
+        with mock.patch("herdr_orch.cli.ensure_orch_session") as ensure, \
+                mock.patch("herdr_orch.cli.start", return_value=True) as seat_orch:
+            _start(self.topic, self.state, self.herdr, "/x", False, "/personal.sock")
+        ensure.assert_not_called()
+        self.assertIsNone(self.state.orch_socket())
+        self.assertIsNone(seat_orch.call_args.kwargs["orch"])
+
+    def test_start_brings_a_detached_orchestrator_back_to_the_topics_session(self) -> None:
+        self.state.record_socket("/personal.sock")
+        self.state.record_orch_socket("/orch.sock")
+        orch = FakeHerdr()
+        with mock.patch("herdr_orch.cli.CliHerdr", return_value=orch) as make, \
+                mock.patch("herdr_orch.cli.bring_back") as back, \
+                mock.patch("herdr_orch.cli.start", return_value=True) as seat_orch:
+            _start(self.topic, self.state, self.herdr, "/x", False, "/personal.sock")
+        make.assert_called_once_with(socket="/orch.sock")
+        back.assert_called_once_with(self.topic, self.state, orch)
+        self.assertIsNone(seat_orch.call_args.kwargs["orch"])
+
+    def test_start_detaches_only_when_asked(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            env = {"HERDR_ORCH_CONFIG": str(root / "cfg"), "HERDR_ORCH_STATE": str(root / "state"), "HOME": d}
+            main(["init", "waki"], env=env, adapter=FakeHerdr())
+            with mock.patch("herdr_orch.cli._start", return_value=True) as begin:
+                main(["start", "waki"], env=env, adapter=FakeHerdr())
+                main(["start", "waki", "--detach"], env=env, adapter=FakeHerdr())
+            self.assertEqual([c.args[4] for c in begin.call_args_list], [False, True])
+
     def test_start_without_a_topic_socket_stays_in_the_callers_session(self) -> None:
         with mock.patch("herdr_orch.cli.ensure_orch_session") as ensure, \
                 mock.patch("herdr_orch.cli.start", return_value=True) as seat_orch:
