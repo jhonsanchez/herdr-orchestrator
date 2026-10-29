@@ -283,7 +283,7 @@ def main(
             release(state, herdr, CliGitHub(), args.branch)
             print(f"{args.branch} released")
         elif args.cmd == "validated":
-            validated(state, args.branch, now(), args.evidence)
+            validated(state, args.branch, now(), args.evidence, bool(topic.deploy_check))
             print(f"{args.branch} marked validated")
         elif args.cmd == "reconcile":
             print(reconcile(topic, state, herdr, now(), home=env.get("HOME")).summary())

@@ -19,7 +19,7 @@ from herdr_orch.herdr import Agent, AgentBlocked, AgentBusy, Herdr
 from herdr_orch.ledger import Ledger
 from herdr_orch.watchdog import nudge_text, stage, stuck_key
 from herdr_orch.seating import release
-from herdr_orch.state import Event, TopicState
+from herdr_orch.state import Event, TopicState, validation_stands
 from herdr_orch.topics import Topic, topic_for
 from herdr_orch.watches_core import StaleTracker, agent_changes, is_unattended, open_obligations, pr_change, resumed_items
 
@@ -320,12 +320,12 @@ class Runner:
             self.state.mark_told(str(branch["branch"]), key)
 
     def _release_validated(self, now: float) -> None:
-        """Release a validated branch whose PR is merged or closed. It never waits for the deploy
-        gate: the agent validates after it, and a branch merged before the gate existed has none."""
+        """Release a branch whose PR is merged or closed and which was validated after its deploy (or,
+        without a deploy gate, after its merge). A validation from before that is ignored."""
         if self.github is None:
             return
         for branch in self.state.tracked_branches():
-            if "validated_at" not in branch or branch.get("pr_state") not in ("merged", "closed"):
+            if branch.get("pr_state") not in ("merged", "closed") or not validation_stands(branch, bool(self.topic.deploy_check)):
                 continue
             if not str(branch.get("evidence") or "").strip():
                 continue  # validated without evidence: an Obligation asks for it, nothing is released
@@ -372,5 +372,5 @@ class Runner:
                         "evidence is refused.")
                 if not self._prompt(str(branch["agent"]), f"[herdr-orchestrator] {' '.join(text.split())}"):
                     continue  # not taken (blocked at a dialog): the gate stays open, retried next poll
-            self.state.mark_deployed(name)
+            self.state.mark_deployed(name, now)
             self.state.append_event("deploy", f"{name} deployed at {sha}; its agent is prompted to validate", now)

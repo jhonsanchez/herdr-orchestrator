@@ -132,7 +132,7 @@ class TopicState:
         if record is None:
             return
         if record.get("pr") not in (None, pr):  # the branch's newest PR: its cycle starts over
-            record = {k: v for k, v in record.items() if k not in ("told", "deployed", "validated_at", "merge_sha")}
+            record = {k: v for k, v in record.items() if k not in ("told", "deployed", "deployed_at", "validated_at", "merge_sha")}
         self._write_branch({**record, "pr": pr, "pr_state": pr_state, "checks": checks, "pr_since": now,
                             "merge_sha": merge_sha or record.get("merge_sha")})
 
@@ -172,10 +172,10 @@ class TopicState:
         elif not (isinstance(old, dict) and old.get("reason") == reason):
             self._write_branch({**record, "held": {"reason": reason, "since": now}})
 
-    def mark_deployed(self, branch: str) -> None:
+    def mark_deployed(self, branch: str, now: float) -> None:
         record = self.branch_record(branch)
         if record is not None:
-            self._write_branch({**record, "deployed": True})
+            self._write_branch({**record, "deployed": True, "deployed_at": now})
 
     def mark_told(self, branch: str, key: str) -> bool:
         """Record that the agent was prompted for a transition; False when it already was (or no record)."""
@@ -368,3 +368,14 @@ def find_registration(root: Path, agent: str) -> tuple[str, str] | None:
             if name == agent:
                 return d.name, pane
     return None
+
+
+def validation_stands(branch: Mapping[str, object], deploy_gate: bool) -> bool:
+    """The branch's `validated` signal counts: it came after the merge's deploy (with a deploy gate) or
+    after the merge or close (without one). An earlier one was given before there was anything to check."""
+    if "validated_at" not in branch:
+        return False
+    validated_at = float(branch["validated_at"])  # type: ignore[arg-type]
+    if deploy_gate and branch.get("pr_state") == "merged":
+        return bool(branch.get("deployed")) and validated_at > float(branch.get("deployed_at") or 0)  # type: ignore[arg-type]
+    return validated_at > float(branch.get("pr_since") or 0)  # type: ignore[arg-type]
