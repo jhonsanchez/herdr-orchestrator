@@ -40,8 +40,9 @@ def _age(row: Row, now: float) -> str:
 
 class App:
     def __init__(self, states: Path, topics: list[Topic], herdr: Herdr, now: Callable[[], float] = time.time,
-                 scope: str | None = None) -> None:
+                 scope: str | None = None, orch_herdr: Callable[[Topic], Herdr] | None = None) -> None:
         self.states, self.topics, self.herdr, self.now = states, topics, herdr, now
+        self.orch_herdr = orch_herdr or (lambda topic: herdr)  # where each Topic's Orchestrator is reached
         self.home_scope = scope  # None: the standalone, all-Topics pane
         self.scope = scope
         self.view = View([], [])
@@ -59,7 +60,7 @@ class App:
 
     def refresh(self) -> None:
         try:
-            self.view = load(self.states, self.topics, self.herdr, self.now(), self.hidden, self.scope)
+            self.view = load(self.states, self.topics, self.herdr, self.now(), self.hidden, self.scope, self.orch_herdr)
         except Exception as e:  # herdr briefly unreachable: keep the last view
             self.message = f"refresh failed: {e}"
         self.selected = min(self.selected, self.last())
@@ -247,8 +248,9 @@ class App:
                     text = self.ask_text(scr, "Your answer: ")
                 if text:
                     try:
-                        orch = next((t.orchestrator for t in self.topics if t.name == row.topic), None)
-                        sent_to = answer(self.states, row, text, self.herdr, orch)
+                        topic = next((t for t in self.topics if t.name == row.topic), None)
+                        target = self.orch_herdr(topic) if topic and row.to == "orchestrator" else self.herdr
+                        sent_to = answer(self.states, row, text, target, topic.orchestrator if topic else None)
                         self.message = f"Sent to {sent_to}."
                     except Exception as e:
                         self.message = f"Not sent, item kept: {e}. [s] dismiss  [o] open pane"

@@ -90,6 +90,10 @@ class TopicState:
         return self.dir / "socket"
 
     @property
+    def orch_socket_file(self) -> Path:
+        return self.dir / "orch-socket"
+
+    @property
     def runner_log(self) -> Path:
         return self.dir / "runner.log"
 
@@ -338,6 +342,17 @@ class TopicState:
     def socket(self) -> str | None:
         try:
             return self.socket_file.read_text().strip() or None
+        except OSError:
+            return None
+
+    # The socket of the detached session the Orchestrator itself runs in; absent when it shares the Topic's session.
+    def record_orch_socket(self, path: str) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.orch_socket_file.write_text(path + "\n")
+
+    def orch_socket(self) -> str | None:
+        try:
+            return self.orch_socket_file.read_text().strip() or None
         except OSError:
             return None
 

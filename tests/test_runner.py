@@ -169,6 +169,17 @@ class RunnerTest(unittest.TestCase):
         self.runner.tick(15)
         self.assertEqual(self.herdr.of("attention_open"), [("attention_open", "w5", "w5:p1", "waki")])
 
+    def test_a_detached_orchestrator_is_prompted_in_its_own_session_and_gets_no_attention_pane(self) -> None:
+        orch = FakeHerdr()
+        orch.agent_list = [Agent("orch-waki", "idle", "w1:p1", "w1")]
+        runner = Runner(self.topic, self.state, self.herdr, self.watches, notify=lambda t, b: self.notes.append((t, b)), orch_herdr=orch)
+        self.watches.pending = [("jira", "WAKI-7 Done")]
+        runner.tick(now=10)
+        self.assertEqual([p[1] for p in orch.of("prompt")], ["orch-waki"])
+        self.assertEqual(self.herdr.of("prompt"), [])
+        self.assertEqual(self.herdr.of("attention_open") + orch.of("attention_open"), [])
+        self.assertEqual(self.notes, [])  # not Unattended: the Orchestrator is there, just not in this session
+
     def test_every_tick_records_the_runner_alive(self) -> None:
         self.herdr.agent_list = [Agent("orch-waki", "idle", "w5:p1", "w5")]
         self.runner.tick(10)
