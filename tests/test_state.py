@@ -61,3 +61,12 @@ class StateLayoutTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SocketRecordTest(unittest.TestCase):
+    def test_the_topics_herdr_socket_is_remembered(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            s = TopicState(Path(d), "waki")
+            self.assertIsNone(s.socket())
+            s.record_socket("/run/herdr/waki.sock")
+            self.assertEqual(s.socket(), "/run/herdr/waki.sock")

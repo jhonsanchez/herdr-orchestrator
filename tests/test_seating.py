@@ -334,3 +334,78 @@ class EnsureLinkTest(unittest.TestCase):
             link = ensure_link(str(old), str(root / "home"), root / "plugins")
             self.assertEqual(Path(link).resolve(), new)
 
+
+
+class RunnerRespawnTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.topic = Topic(name="waki", dir=root / "cfg/topics/waki")
+        self.state = TopicState(root / "state", "waki")
+        self.spawned: list[str] = []
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def ensure(self, alive: bool, now: float = 1000.0) -> bool:
+        return seating.ensure_runner("/x/herdr-orch", self.topic, self.state, now,
+                                     spawn=lambda cli, t, s: self.spawned.append(cli), alive=lambda pid: alive)
+
+    def test_a_dead_pid_is_respawned(self) -> None:
+        self.state.record_runner(4242, 990.0, 5)
+        self.assertTrue(self.ensure(alive=False))
+        self.assertEqual(self.spawned, ["/x/herdr-orch"])
+
+    def test_no_runner_file_is_respawned(self) -> None:
+        self.assertTrue(self.ensure(alive=True))
+
+    def test_a_live_fresh_runner_is_left_alone(self) -> None:
+        self.state.record_runner(4242, 990.0, 5)
+        self.assertFalse(self.ensure(alive=True))
+        self.assertEqual(self.spawned, [])
+
+    def test_a_stale_runner_is_respawned_even_when_its_pid_lives(self) -> None:
+        self.state.record_runner(4242, 100.0, 5)
+        with mock.patch.object(seating, "_stop_wedged") as stop:
+            self.assertTrue(self.ensure(alive=True))
+        stop.assert_called_once_with(4242, "waki")
+        self.assertEqual(len(self.spawned), 1)
+
+    def test_spawn_gives_the_runner_the_topics_recorded_socket(self) -> None:
+        self.state.record_socket("/run/waki.sock")
+        with mock.patch.object(seating.subprocess, "Popen") as popen:
+            seating.spawn_runner("/x/herdr-orch", self.topic, self.state)
+        self.assertEqual(popen.call_args.kwargs["env"]["HERDR_SOCKET_PATH"], "/run/waki.sock")
+
+
+class SessionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.topic = Topic(name="waki", dir=root / "cfg/topics/waki")
+        self.state = TopicState(root / "state", "waki")
+        self.sessions = {"/waki.sock": FakeHerdr(), "/personal.sock": FakeHerdr()}
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def pick(self, caller: str | None) -> FakeHerdr:
+        return seating.session_herdr(self.topic, self.state, caller, self.sessions.__getitem__)  # type: ignore[return-value]
+
+    def test_a_recorded_socket_wins_over_the_callers(self) -> None:
+        self.state.record_socket("/waki.sock")
+        self.sessions["/waki.sock"].agent_list = [Agent("orch-waki", "idle", "w1:p1", "w1")]
+        self.assertIs(self.pick("/personal.sock"), self.sessions["/waki.sock"])
+
+    def test_a_recorded_session_without_its_orchestrator_refuses(self) -> None:
+        self.state.record_socket("/waki.sock")
+        with self.assertRaisesRegex(RuntimeError, "/waki.sock"):
+            self.pick("/personal.sock")
+        self.assertEqual(self.sessions["/personal.sock"].calls, [])
+
+    def test_the_recorded_session_itself_may_start_a_missing_orchestrator(self) -> None:
+        self.state.record_socket("/waki.sock")
+        self.assertIs(self.pick("/waki.sock"), self.sessions["/waki.sock"])
+
+    def test_nothing_recorded_uses_the_callers(self) -> None:
+        self.assertIs(self.pick("/personal.sock"), self.sessions["/personal.sock"])

@@ -150,3 +150,34 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual([i for i in self.state.inbox_lines() if i["status"] == "open"], [])
         self.assertEqual(self.run_it().swept, [])
 
+
+
+class ReconcileGuardTest(unittest.TestCase):
+    setUp = ReconcileTest.setUp
+    tearDown = ReconcileTest.tearDown
+    run_it = ReconcileTest.run_it
+    seat = ReconcileTest.seat
+
+    def test_a_reconcile_that_sees_none_of_the_topics_agents_drops_nothing(self) -> None:
+        # #108: run against another herdr session, it saw no agent of this Topic and emptied the Registry.
+        for pane, name in (("w2:p1", "issue-1"), ("w3:p1", "issue-2")):
+            self.state.take(pane, name)
+        self.herdr.agent_list.append(Agent("someone-else", "idle", "w9:p1", "w9"))
+        result = self.run_it()
+        self.assertEqual(result.dropped, [])
+        self.assertIn("none of", result.refused or "")
+        self.assertEqual(len(self.state.managed()), 2)
+        self.assertIn("refused to drop", result.summary())
+
+    def test_a_reconcile_where_most_entries_are_missing_at_once_drops_nothing(self) -> None:
+        self.seat("w2", "issue-1", "/wt/issue-1")
+        for i in (2, 3, 4):
+            self.state.take(f"w{i}:p9", f"issue-{i}")
+        result = self.run_it()
+        self.assertEqual(result.dropped, [])
+        self.assertEqual(len(self.state.managed()), 4)
+
+    def test_the_orchestrator_being_visible_lets_the_last_entry_go(self) -> None:
+        self.state.take("w2:p1", "issue-1")
+        self.herdr.agent_list.append(Agent("orch-personal", "idle", "w1:p1", "w1"))
+        self.assertEqual(self.run_it().dropped, ["issue-1"])

@@ -102,11 +102,13 @@ def find_key(value: Any, key: str) -> str | None:
 class CliHerdr:
     """herdr through HERDR_BIN_PATH (what herdr injects into plugin commands), else PATH."""
 
-    def __init__(self, binary: str | None = None) -> None:
+    def __init__(self, binary: str | None = None, socket: str | None = None) -> None:
         self.binary = binary or os.environ.get("HERDR_BIN_PATH") or "herdr"
+        self.socket = socket  # herdr picks its session by HERDR_SOCKET_PATH; None keeps the caller's
 
     def _run(self, *args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([self.binary, *args], check=check, capture_output=True, text=True)
+        env = {**os.environ, "HERDR_SOCKET_PATH": self.socket} if self.socket else None
+        return subprocess.run([self.binary, *args], check=check, capture_output=True, text=True, env=env)
 
     def _json(self, *args: str) -> Any:
         out = self._run(*args, check=True).stdout

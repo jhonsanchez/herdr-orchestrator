@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import signal
 import shlex
 import subprocess
 import sys
@@ -17,7 +18,8 @@ from herdr_orch.attention import current_items
 from herdr_orch.deploy import newest_cli
 from herdr_orch.github import GitHub
 from herdr_orch.herdr import Herdr
-from herdr_orch.state import TopicState
+from herdr_orch.state import TopicState, pid_alive
+from herdr_orch.watches_core import RUNNER_STALE_S
 from herdr_orch.topics import Topic, expand_home
 
 
@@ -217,11 +219,60 @@ def spawn_runner(cli: str, topic: Topic, state: TopicState) -> None:
     Orchestrator is gone (see Runner.done) and on SIGTERM. Its output goes to runner.log."""
     state.dir.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "HERDR_ORCH_CONFIG": str(topic.config_root), "HERDR_ORCH_STATE": str(state.root)}
+    if state.socket():  # the runner watches the Topic's own session, whatever session spawned it
+        env["HERDR_SOCKET_PATH"] = str(state.socket())
     with state.runner_log.open("ab") as log:
         subprocess.Popen(
             [cli, "watch", topic.name], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
             start_new_session=True,
         )
+
+
+def _stop_wedged(pid: int, topic: str) -> None:
+    """SIGTERM a stale runner whose pid still lives, but only if that pid is still a `watch <topic>`."""
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return
+    if b"watch" in cmdline and topic.encode() in cmdline:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def ensure_runner(
+    cli: str,
+    topic: Topic,
+    state: TopicState,
+    now: float,
+    spawn: Callable[[str, Topic, TopicState], None] | None = None,
+    alive: Callable[[int], bool] = pid_alive,
+) -> bool:
+    """Respawn the Watch runner when its file names a dead pid or has gone stale (or is missing).
+    True when it did; a live, fresh runner is left alone."""
+    status = state.runner_status()
+    if status is not None and alive(status.pid):
+        if now - status.at < RUNNER_STALE_S:
+            return False
+        _stop_wedged(status.pid, topic.name)
+    (spawn or spawn_runner)(cli, topic, state)
+    return True
+
+
+def session_herdr(topic: Topic, state: TopicState, caller_socket: str | None,
+                  make: Callable[[str | None], Herdr]) -> Herdr:
+    """The herdr of the session the Topic's Orchestrator lives in: the socket `start` recorded wins over
+    the caller's. Called from another session, it refuses when the recorded one has no Orchestrator,
+    rather than seating a second one in the wrong session."""
+    recorded = state.socket()
+    if recorded is None or caller_socket in (None, recorded):
+        return make(recorded or caller_socket)
+    herdr = make(recorded)
+    if not any(a.name == topic.orchestrator for a in herdr.agents()):
+        raise RuntimeError(f"Topic {topic.name}'s Orchestrator lives in the herdr session at {recorded}, "
+                           f"and it is not running there: start it from that session")
+    return herdr
 
 
 def start(

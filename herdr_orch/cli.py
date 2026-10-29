@@ -31,12 +31,12 @@ from herdr_orch.reconcile import reconcile
 from herdr_orch.runner import Runner
 from herdr_orch.github import CliGitHub
 from herdr_orch.ledger import status_rows, status_table
-from herdr_orch.seating import ensure_link, release, seat, start, validated
-from herdr_orch.state import TopicState, find_managed, state_root
+from herdr_orch.seating import ensure_link, ensure_runner, release, seat, session_herdr, start, validated
+from herdr_orch.state import TopicState, find_managed, pid_alive, state_root
 from herdr_orch.supervisor import Supervisor
 from herdr_orch.topics import Answers, Topic, parse_notify, config_root, init_topic, load_topic, load_topics, topic_for
 from herdr_orch.wizard import ask_answers
-from herdr_orch.watches_core import RUNNER_STALE_S
+from herdr_orch.watches_core import RUNNER_STALE_S, runner_down
 
 CLI = str(Path(__file__).resolve().parent.parent / "bin" / "herdr-orch")
 TICK_SECONDS = 15.0
@@ -235,11 +235,22 @@ def main(
             return 2
         topic = named
     state = TopicState(states, topic.name)
+    caller_socket = env.get("HERDR_SOCKET_PATH") or None
 
     try:
+        if adapter is None and (state.socket() or args.cmd == "start"):
+            # The Topic's Orchestrator lives in one herdr session; every command talks to that one.
+            herdr = session_herdr(topic, state, caller_socket, lambda sock: CliHerdr(socket=sock))
         if args.cmd == "heartbeat":
             state.touch_heartbeat(now())
+            home = env.get("HOME") or str(Path.home())
+            if ensure_runner(ensure_link(CLI, home, plugins_dir(env, home)), topic, state, now(), alive=_alive):
+                print(f"Watch runner for {topic.name} was down: respawned")
         elif args.cmd == "status":
+            runner = state.runner_status()
+            if runner is None or runner_down(now(), runner.at) or not _alive(runner.pid):
+                print(f"Watch runner for {topic.name} is not running: no Events are collected until `herdr-orch heartbeat {topic.name}` respawns it",
+                      file=sys.stderr if args.json else sys.stdout)
             rows = status_rows(state, now())
             print(json.dumps(rows) if args.json else status_table(rows))
         elif args.cmd == "deployed":
@@ -247,6 +258,8 @@ def main(
             return 0 if is_deployed(args.sha, plugins_dir(env, home), state) else 1
         elif args.cmd == "start":
             home = env.get("HOME") or str(Path.home())
+            if state.socket() is None and caller_socket:
+                state.record_socket(caller_socket)  # before the runner spawns: it reads this
             if not start(topic, state, herdr, ensure_link(CLI, home, plugins_dir(env, home))):
                 return 1
         elif args.cmd == "inbox":
@@ -297,14 +310,7 @@ def _answers(args: argparse.Namespace) -> Answers | None:
     )
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+_alive = pid_alive
 
 
 def _stop(signum: int, frame: object) -> None:
