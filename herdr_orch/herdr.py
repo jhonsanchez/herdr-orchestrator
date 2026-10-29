@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -75,10 +76,34 @@ def delivery(screen: str, snippet: str) -> Delivery:
     return "answered" if any(line.startswith("●") for line in lines[at + 1:]) else "pasted"
 
 
+SGR = re.compile(r"\x1b\[([0-9;]*)m")
+ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def undimmed(line: str) -> str:
+    """`line` without its dim (SGR 2) runs and without escape sequences."""
+    out: list[str] = []
+    dim = False
+    at = 0
+    for m in SGR.finditer(line):
+        if not dim:
+            out.append(line[at:m.start()])
+        at = m.end()
+        for code in m.group(1).split(";"):
+            if code in ("", "0", "22"):
+                dim = False
+            elif code == "2":
+                dim = True
+    if not dim:
+        out.append(line[at:])
+    return ANSI.sub("", "".join(out))
+
+
 def typed_input(screen: str) -> str:
-    """What sits in the input box (the last ❯ line on screen), minus Claude's greyed-out suggestion."""
-    prompts = [line for line in screen.splitlines() if line.lstrip().startswith("❯")]
-    text = prompts[-1].lstrip()[1:].strip() if prompts else ""
+    """What sits in the input box (the last ❯ line on screen), minus Claude's greyed-out
+    suggestion: dim text when the screen carries ANSI styles, a `Try "` prefix otherwise."""
+    prompts = [line for line in screen.splitlines() if ANSI.sub("", line).lstrip().startswith("❯")]
+    text = undimmed(prompts[-1]).lstrip()[1:].strip() if prompts else ""
     return "" if text.startswith('Try "') else text
 
 
@@ -141,6 +166,10 @@ class CliHerdr:
     def _screen_of(self, agent: str) -> str:
         return self._run("agent", "read", agent, "--source", "visible", "--lines", "80").stdout
 
+    def _styled_screen_of(self, agent: str) -> str:
+        """The visible screen with ANSI styles, so the guard can tell dim suggestions from typing."""
+        return self._run("agent", "read", agent, "--source", "visible", "--lines", "80", "--format", "ansi").stdout
+
     def _send(self, agent: str, text: str) -> None:
         try:
             self._json("agent", "prompt", agent, text)
@@ -158,7 +187,7 @@ class CliHerdr:
         AgentBusy when the person has typed something a prompt would collide with."""
         snippet = text.splitlines()[0][:30]
         # A dialog's selected option is also a ❯ line: herdr's `blocked` says which it is, and _send then refuses it.
-        if typed_input(self._screen_of(agent)) and self._status_of(agent) != "blocked":
+        if typed_input(self._styled_screen_of(agent)) and self._status_of(agent) != "blocked":
             raise AgentBusy(f"{agent} has text in its input box; the prompt was not sent")
         for _ in range(2):
             self._send(agent, text)
