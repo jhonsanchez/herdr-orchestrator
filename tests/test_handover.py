@@ -69,6 +69,18 @@ class HandoverTest(unittest.TestCase):
         self.assertEqual(self.run_cli(["is-managed"], {**self.env, "HERDR_PANE_ID": "w5:p1"}), 1)
         self.assertEqual(self.run_cli(["is-managed"], self.env), 1)
 
+    def test_whoami_prints_the_calling_panes_agent_name_and_fails_when_unmanaged(self) -> None:
+        self.run_cli(["take", "falcon-9"])
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(["whoami"], {**self.env, "HERDR_PANE_ID": "w4:p1"}, adapter=self.herdr)
+        self.assertEqual((code, out.getvalue()), (0, "falcon-9\n"))
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["whoami"], {**self.env, "HERDR_PANE_ID": "w5:p1"}, adapter=self.herdr), 1)
+            self.assertEqual(main(["whoami"], self.env, adapter=self.herdr), 1)
+        self.assertEqual(out.getvalue(), "")
+
 
 if __name__ == "__main__":
     unittest.main()

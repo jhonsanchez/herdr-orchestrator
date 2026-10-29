@@ -107,7 +107,7 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual(self.herdr.of("worktree_create"), [
             ("worktree_create", "w3", "FALCON-12", "FALCON-12", "/home/u/.herdr/worktrees/zpc/FALCON-12", "origin/develop"),
         ])
-        self.assertEqual(self.herdr.of("pane_run"), [("pane_run", r.pane_id, "export CLAUDE_CONFIG_DIR=/home/u/.claude-zebra")])
+        self.assertIn(("pane_run", r.pane_id, "export CLAUDE_CONFIG_DIR=/home/u/.claude-zebra"), self.herdr.of("pane_run"))
         self.assertEqual(self.herdr.of("agent_start"), [("agent_start", "falcon-12", r.pane_id, ("--model", "sonnet"))])
         self.assertEqual(self.state.managed(), {r.pane_id: "falcon-12"})
         [prompt] = self.herdr.of("prompt")
@@ -115,6 +115,15 @@ class SeatingTest(unittest.TestCase):
         self.assertIn(str(self.topic.brief_path), str(prompt[2]))
         self.assertIn(f"run: HERDR_ORCH_CONFIG={self.topic.config_root} HERDR_ORCH_STATE={self.state.root} /opt/herdr-orch "
                       "validated zebra --branch FALCON-12", str(prompt[2]))
+
+    def test_seat_exports_the_agents_name_and_topic_before_starting_it(self) -> None:
+        r = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", cli="/opt/herdr-orch")
+        runs = [c[2] for c in self.herdr.of("pane_run")]
+        self.assertIn("export HERDR_ORCH_AGENT=falcon-12", runs)
+        self.assertIn("export HERDR_ORCH_TOPIC=zebra", runs)
+        calls = [c[0] for c in self.herdr.calls]
+        self.assertLess(max(i for i, c in enumerate(calls) if c == "pane_run"), calls.index("agent_start"))
+        self.assertTrue(all(c[1] == r.pane_id for c in self.herdr.of("pane_run")))
 
     def test_seat_refuses_a_branch_or_workspace_a_live_agent_already_tracks(self) -> None:
         r = seat(self.topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", cli="/opt/herdr-orch")

@@ -168,7 +168,7 @@ class RunnerPrTest(unittest.TestCase):
     def test_a_second_pr_on_the_branch_restarts_the_cycle_and_is_announced_by_number(self) -> None:
         self.github.prs["issue-1"] = PullRequest(48, "merged", "passing", merge_sha="aaa11111")
         self.runner.tick(1)
-        self.state.mark_deployed("issue-1")
+        self.state.mark_deployed("issue-1", 1)
         self.state.mark_validated("issue-1", 2, "ran it")
         self.github.prs["issue-1"] = PullRequest(56, "open", "passing")
         self.runner.tick(1 + PR_POLL_SECONDS)
@@ -329,6 +329,7 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(self.state.managed(), {"p2": "issue-2"})
 
     def test_validated_marks_the_branch_and_tells_the_orchestrator(self) -> None:
+        self.state.set_pr("issue-1", 20, "merged", "passing", 400.0, "abc")
         validated(self.state, "issue-1", 500.0, "herdr-orch deployed: exit 0\nplugin at abc123")
         record = self.state.branch_record("issue-1")
         self.assertEqual(record["validated_at"], 500.0)  # type: ignore[index]
@@ -336,6 +337,23 @@ class ReleaseTest(unittest.TestCase):
         (event,) = self.state.events_since(0)
         self.assertEqual(event.source, "validated")
         self.assertIn("exit 0 plugin at abc123", event.text)
+
+    def test_validated_on_an_open_pr_is_refused_and_records_nothing(self) -> None:
+        self.state.set_pr("issue-1", 20, "open", "passing", 400.0)
+        with self.assertRaisesRegex(ValueError, "merge"):
+            validated(self.state, "issue-1", 500.0, "PR open; tests pass")
+        self.assertNotIn("validated_at", self.state.branch_record("issue-1") or {})
+        self.assertEqual(self.state.events_since(0), [])
+
+    def test_validated_before_the_deploy_is_refused_when_the_topic_has_a_gate(self) -> None:
+        self.state.set_pr("issue-1", 20, "merged", "passing", 400.0, "abc")
+        with self.assertRaisesRegex(ValueError, "deploy prompt"):
+            validated(self.state, "issue-1", 500.0, "ran it", deploy_gate=True)
+        self.assertNotIn("validated_at", self.state.branch_record("issue-1") or {})
+        self.assertEqual(self.state.events_since(0), [])
+        self.state.mark_deployed("issue-1", 450.0)
+        validated(self.state, "issue-1", 500.0, "ran it", deploy_gate=True)
+        self.assertEqual(self.state.branch_record("issue-1")["validated_at"], 500.0)  # type: ignore[index]
 
     def test_validated_with_empty_evidence_is_refused_and_records_nothing(self) -> None:
         with self.assertRaisesRegex(ValueError, "evidence"):

@@ -84,7 +84,7 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(got({"pr_state": "merged"}, "idle"), ("waiting_on", "deploy", "runner"))
         self.assertEqual(got({"pr_state": "merged", "deployed": True}, "idle"), ("waiting_on", "validate", "agent"))
         self.assertEqual(got({"pr_state": "merged"}, "idle", gate=False), ("waiting_on", "validate", "agent"))
-        self.assertEqual(got({"pr_state": "merged", "validated_at": 1, "evidence": "ok"}, None), ("working", None, "runner"))
+        self.assertEqual(got({"pr_state": "merged", "deployed": True, "deployed_at": 0, "validated_at": 1, "evidence": "ok"}, None), ("working", None, "runner"))
         self.assertEqual(got({"pr_state": "merged", "validated_at": 1, "evidence": ""}, None)[1], "deploy")
         self.assertEqual(got({"pr_state": "closed"}, "idle"), ("waiting_on", "human", "orchestrator"))
 

@@ -39,6 +39,16 @@ class TypedInputTest(unittest.TestCase):
         self.assertEqual(typed_input(ANSWERED), "")
         self.assertEqual(typed_input(MISSING), "")
 
+    def test_a_dim_bare_suggestion_is_not_typing(self) -> None:
+        self.assertEqual(typed_input("❯ \x1b[0m\x1b[2mWait for deploy and validate\x1b[0m\n"), "")
+        self.assertEqual(typed_input("\x1b[2m❯ run the validated command\x1b[0m"), "")
+
+    def test_typed_text_is_kept_when_styled(self) -> None:
+        self.assertEqual(typed_input("❯ \x1b[0mresolve the five\x1b[0m\n"), "resolve the five")
+
+    def test_typed_text_followed_by_a_dim_hint_keeps_the_typed_part(self) -> None:
+        self.assertEqual(typed_input("❯ resolve the five\x1b[2m and merge\x1b[0m\n"), "resolve the five")
+
 
 if __name__ == "__main__":
     unittest.main()
