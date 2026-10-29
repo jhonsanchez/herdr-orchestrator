@@ -150,14 +150,6 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual([i for i in self.state.inbox_lines() if i["status"] == "open"], [])
         self.assertEqual(self.run_it().swept, [])
 
-
-
-class ReconcileGuardTest(unittest.TestCase):
-    setUp = ReconcileTest.setUp
-    tearDown = ReconcileTest.tearDown
-    run_it = ReconcileTest.run_it
-    seat = ReconcileTest.seat
-
     def test_a_reconcile_that_sees_none_of_the_topics_agents_drops_nothing(self) -> None:
         # #108: run against another herdr session, it saw no agent of this Topic and emptied the Registry.
         for pane, name in (("w2:p1", "issue-1"), ("w3:p1", "issue-2")):

@@ -373,7 +373,7 @@ class RunnerRespawnTest(unittest.TestCase):
 
     def test_spawn_gives_the_runner_the_topics_recorded_socket(self) -> None:
         self.state.record_socket("/run/waki.sock")
-        with mock.patch.object(seating.subprocess, "Popen") as popen:
+        with mock.patch("subprocess.Popen") as popen:
             seating.spawn_runner("/x/herdr-orch", self.topic, self.state)
         self.assertEqual(popen.call_args.kwargs["env"]["HERDR_SOCKET_PATH"], "/run/waki.sock")
 
@@ -384,7 +384,7 @@ class SessionTest(unittest.TestCase):
         root = Path(self.tmp.name)
         self.topic = Topic(name="waki", dir=root / "cfg/topics/waki")
         self.state = TopicState(root / "state", "waki")
-        self.sessions = {"/waki.sock": FakeHerdr(), "/personal.sock": FakeHerdr()}
+        self.sessions: dict[str | None, FakeHerdr] = {"/waki.sock": FakeHerdr(), "/personal.sock": FakeHerdr()}
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
