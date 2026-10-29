@@ -19,7 +19,7 @@ from herdr_orch.deploy import newest_cli
 from herdr_orch.github import GitHub
 from herdr_orch.herdr import Herdr
 from herdr_orch.state import TopicState, pid_alive
-from herdr_orch.watches_core import RUNNER_STALE_S
+from herdr_orch.watches_core import REEXEC_GRACE_S, RUNNER_STALE_S
 from herdr_orch.topics import Topic, expand_home
 
 
@@ -252,10 +252,10 @@ def ensure_runner(
     alive: Callable[[int], bool] = pid_alive,
 ) -> bool:
     """Respawn the Watch runner when its file names a dead pid or has gone stale (or is missing).
-    True when it did; a live, fresh runner is left alone."""
+    True when it did; a live runner is left alone, even a stale one inside the re-exec grace period."""
     status = state.runner_status()
     if status is not None and alive(status.pid):
-        if now - status.at < RUNNER_STALE_S:
+        if now - status.at < RUNNER_STALE_S + REEXEC_GRACE_S:
             return False
         _stop_wedged(status.pid, topic.name)
     (spawn or spawn_runner)(cli, topic, state)

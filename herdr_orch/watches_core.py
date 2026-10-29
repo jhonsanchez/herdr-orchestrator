@@ -68,6 +68,7 @@ class StaleTracker:
 
 
 RUNNER_STALE_S = 60.0  # a Watch runner that has not ticked this long (4 ticks) is dead or wedged
+REEXEC_GRACE_S = 60.0  # past stale, a live pid is still not called wedged this long: a re-exec reconciles for seconds
 
 
 def runner_down(now: float, runner_at: float | None) -> bool:
