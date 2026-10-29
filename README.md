@@ -69,6 +69,7 @@ A Topic lives in `~/.config/herdr/plugins/config/jhonsanchez.orchestrator/topics
   - **Keys:** `enter` answers (the answer goes straight to the agent's pane), `o` opens that pane, `s` skips (a skipped `blocked`/`done` row comes back when the agent's status changes), `q` quits.
 - **Hand over an agent you seated:** `herdr-orch take <agent>` registers it under the Topic its repo belongs to and sends it the brief. `herdr-orch give-back <agent>` returns it to you.
 - **Your own hooks:** `herdr-orch is-managed` exits 0 when the calling pane's agent is Managed. Use it to skip your own per-turn notifications for those agents.
+- **A seated agent's own name:** `seat` exports `HERDR_ORCH_AGENT` and `HERDR_ORCH_TOPIC` into the agent's pane before starting it. `herdr-orch whoami` prints the calling pane's Managed agent name from the Registry, and exits 1 in a pane that isn't Managed; it also covers agents seated earlier or handed over with `take`. Topic scripts should use these, never a typed name.
 - **Events:**
   - agents that become `blocked`, `done` or `gone`
   - silent panes

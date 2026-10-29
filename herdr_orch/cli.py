@@ -163,12 +163,22 @@ def main(
     sub.add_parser("take", help="hand an agent you seated over to its Topic's Orchestrator").add_argument("agent")
     sub.add_parser("give-back", help="take a handed-over agent back").add_argument("agent")
     sub.add_parser("is-managed", help="exit 0 when the calling pane's agent is Managed (for your own hooks)")
+    sub.add_parser("whoami", help="print the calling pane's Managed agent name (exit 1 when the pane is not Managed)")
     sub.add_parser("attention", help="the Attention pane: every Topic's items that need you")
     args = p.parse_args(argv)
 
     if args.cmd == "is-managed":
         pane = env.get("HERDR_PANE_ID")
         return 0 if pane and find_managed(state_root(env), pane) else 1
+
+    if args.cmd == "whoami":
+        pane = env.get("HERDR_PANE_ID")
+        managed = find_managed(state_root(env), pane) if pane else None
+        if managed is None:
+            print("this pane is not a Managed agent", file=sys.stderr)
+            return 1
+        print(managed.agent)
+        return 0
 
     herdr: Herdr = adapter or CliHerdr()
     configs, states = config_root(env), state_root(env)
