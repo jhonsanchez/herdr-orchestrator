@@ -175,6 +175,8 @@ def _start_and_brief(topic: Topic, state: TopicState, herdr: Herdr, branch: str,
                      repo_root: str | None) -> None:
     for key, value in topic.env.items():
         herdr.pane_run(pane, f"export {key}={shlex.quote(expand_home(value, home))}")
+    herdr.pane_run(pane, f"export HERDR_ORCH_AGENT={shlex.quote(name)}")
+    herdr.pane_run(pane, f"export HERDR_ORCH_TOPIC={shlex.quote(topic.name)}")
     started = herdr.agent_start(name, pane, ["--model", topic.model] if topic.model else [])
     state.take(pane, name)
     worktree_ws = next((a.workspace_id for a in herdr.agents() if a.pane_id == pane), None)

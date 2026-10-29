@@ -6,3 +6,4 @@ You are a seated agent: one piece of work, in your own worktree. The Orchestrato
 - Push only to your own branch. Never merge.
 - Never print secrets.
 - One branch, one workspace: when your branch merges you are done. Do not start another branch in your worktree; ask the Orchestrator for a new seat.
+- Your own herdr agent name is in `$HERDR_ORCH_AGENT` (your Topic in `$HERDR_ORCH_TOPIC`). If they are unset, run `herdr-orch whoami`. Use these wherever a script asks for your name; never type or guess it.
