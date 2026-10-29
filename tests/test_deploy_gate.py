@@ -102,6 +102,7 @@ class DeployGateTest(unittest.TestCase):
         self.assertEqual(len(self.prompts()), 1)
         self.assertNotIn("released", " ".join(self.told()))
         deployed_at = self.state.branch_record("issue-1")["deployed_at"]  # type: ignore[index]
+        assert isinstance(deployed_at, float)
         self.state.mark_validated("issue-1", deployed_at + 1, "ran it after the deploy")
         self.runner.tick(1 + 2 * PR_POLL_SECONDS + DEPLOY_POLL_SECONDS)
         self.assertIsNone(self.state.branch_record("issue-1"))
