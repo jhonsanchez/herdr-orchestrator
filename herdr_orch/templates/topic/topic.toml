@@ -9,6 +9,12 @@
 # [env]
 # CLAUDE_CONFIG_DIR = "~/.claude-acme"
 
+# Kind of the seated agents (default "claude") and native args passed after `--`. `model` only
+# works with kinds that take --model (claude, codex). The Orchestrator is always Claude.
+# [agent]
+# kind = "codex"
+# args = ["--full-auto"]
+
 # Command that sends you a push: gets "<title>\n<body>" on stdin. Default: none.
 # notify_command = ["ntfy-send"]
 

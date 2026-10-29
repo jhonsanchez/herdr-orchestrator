@@ -39,6 +39,28 @@ class TopicsTest(unittest.TestCase):
         self.assertEqual(t.brief_path, self.root / "topics/waki/brief.md")
         self.assertEqual(t.watches_dir, self.root / "topics/waki/watches")
 
+    def test_agent_table_sets_kind_and_args_and_defaults_to_claude(self) -> None:
+        self.write_topic("a", "")
+        self.write_topic("b", '[agent]\nkind = "pi"\nargs = ["--fast"]\n')
+        a, b = load_topics(self.root)
+        self.assertEqual((a.agent_kind, a.agent_args), ("claude", []))
+        self.assertEqual((b.agent_kind, b.agent_args), ("pi", ["--fast"]))
+
+    def test_model_with_a_kind_that_takes_no_model_is_refused_at_load(self) -> None:
+        self.write_topic("a", 'model = "sonnet"\n[agent]\nkind = "pi"\n')
+        with self.assertRaisesRegex(ValueError, "pi.*takes no --model"):
+            load_topics(self.root)
+
+    def test_model_is_accepted_for_codex(self) -> None:
+        self.write_topic("a", 'model = "gpt-5"\n[agent]\nkind = "codex"\n')
+        [t] = load_topics(self.root)
+        self.assertEqual((t.agent_kind, t.model), ("codex", "gpt-5"))
+
+    def test_unknown_agent_key_is_refused(self) -> None:
+        self.write_topic("a", '[agent]\nknd = "pi"\n')
+        with self.assertRaisesRegex(ValueError, "unknown \\[agent\\] key"):
+            load_topics(self.root)
+
     def test_overrides_are_read(self) -> None:
         self.write_topic(
             "zebra",

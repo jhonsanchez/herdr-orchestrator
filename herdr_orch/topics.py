@@ -38,6 +38,9 @@ def config_root(env: Mapping[str, str] = os.environ) -> Path:
     return Path(home) / ".config/herdr/plugins/config" / PLUGIN_ID
 
 
+MODEL_KINDS = ("claude", "codex")  # agent kinds known to take --model
+
+
 @dataclass(frozen=True)
 class Topic:
     name: str
@@ -46,6 +49,8 @@ class Topic:
     env: dict[str, str] = field(default_factory=dict)
     model: str | None = None
     orchestrator_model: str | None = None  # the Orchestrator's own; defaults to model
+    agent_kind: str = "claude"  # the herdr agent kind of seated agents; the Orchestrator is always Claude
+    agent_args: list[str] = field(default_factory=list)  # native args for seated agents, passed after `--`
     base: str | None = None
     notify_command: list[str] = field(default_factory=list)
     notify: str = "none"  # stop-hook | herdr | none; a notify_command wins over it
@@ -90,9 +95,18 @@ class Topic:
 def load_topic(d: Path) -> Topic:
     toml = d / "topic.toml"
     data = tomllib.loads(toml.read_text()) if toml.exists() else {}
-    known = {f.name for f in fields(Topic)} - {"name", "dir"}
+    known = {f.name for f in fields(Topic)} - {"name", "dir", "agent_kind", "agent_args"}
     # Keys left out keep the dataclass defaults, the one place they are written.
-    return Topic(name=d.name, dir=d, **{k: v for k, v in data.items() if k in known})
+    agent = data.get("agent", {})
+    unknown = set(agent) - {"kind", "args"}
+    if unknown:
+        raise ValueError(f"{toml}: unknown [agent] key(s): {', '.join(sorted(unknown))} (known: kind, args)")
+    topic = Topic(name=d.name, dir=d, agent_kind=agent.get("kind", "claude"), agent_args=list(agent.get("args", [])),
+                  **{k: v for k, v in data.items() if k in known})
+    if topic.model and topic.agent_kind not in MODEL_KINDS:
+        raise ValueError(f"{toml}: model is set but agent kind {topic.agent_kind!r} takes no --model "
+                         f"(only {', '.join(MODEL_KINDS)}): drop model, or pass the kind's own flag in [agent] args")
+    return topic
 
 
 def load_topics(root: Path) -> list[Topic]:
