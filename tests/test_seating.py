@@ -276,6 +276,20 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual(len(self.herdr.of("read_screen")), 1)
         self.assertEqual(len(self.herdr.of("prompt")), 1)
 
+    def test_a_topics_agent_kind_and_args_follow_the_model_flag(self) -> None:
+        topic = Topic(name="zebra", dir=self.topic.dir, model="sonnet", agent_kind="codex", agent_args=["--full-auto"], base="origin/develop")
+        r = seat(topic, self.state, self.herdr, workspace_id="w3", branch="FALCON-12", home="/home/u", cli="/opt/herdr-orch")
+        self.assertEqual(self.herdr.of("agent_start"), [("agent_start", "falcon-12", r.pane_id, ("--model", "sonnet", "--full-auto"))])
+        self.assertEqual(self.herdr.kinds["falcon-12"], "codex")
+
+    def test_the_orchestrator_stays_claude_whatever_the_agent_kind(self) -> None:
+        self.write_playbook()
+        topic = Topic(name="zebra", dir=self.topic.dir, agent_kind="pi", agent_args=["--x"])
+        start(topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=lambda m: None)
+        self.assertEqual(self.herdr.kinds["orch-zebra"], "claude")
+        [(_, _, _, args)] = self.herdr.of("agent_start")
+        self.assertEqual(args, ())
+
     def test_the_orchestrator_runs_on_the_topics_model(self) -> None:
         self.write_playbook()
         start(self.topic, self.state, self.herdr, cli="/x", spawn=self.spawn, say=lambda m: None)

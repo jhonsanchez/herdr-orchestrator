@@ -12,6 +12,7 @@ class FakeHerdr:
         self.gone_workspaces: set[str] = set()  # workspaces herdr answers workspace_not_found for
         self.workspace_list: list[Workspace] = []
         self.calls: list[tuple[object, ...]] = []
+        self.kinds: dict[str, str] = {}  # agent name -> kind it was started as
         self._n = 0
         self.ready_after_start = True
         self.attention: set[str] = set()
@@ -77,8 +78,9 @@ class FakeHerdr:
     def pane_run(self, pane_id: str, command: str) -> None:
         self.calls.append(("pane_run", pane_id, command))
 
-    def agent_start(self, name: str, pane_id: str, args: list[str]) -> bool:
+    def agent_start(self, name: str, pane_id: str, args: list[str], kind: str = "claude") -> bool:
         self.calls.append(("agent_start", name, pane_id, tuple(args)))
+        self.kinds[name] = kind
         return self.ready_after_start
 
     def notification(self, title: str, body: str) -> None:

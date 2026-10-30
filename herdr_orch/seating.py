@@ -180,7 +180,8 @@ def _start_and_brief(topic: Topic, state: TopicState, herdr: Herdr, branch: str,
         herdr.pane_run(pane, f"export {key}={shlex.quote(expand_home(value, home))}")
     herdr.pane_run(pane, f"export HERDR_ORCH_AGENT={shlex.quote(name)}")
     herdr.pane_run(pane, f"export HERDR_ORCH_TOPIC={shlex.quote(topic.name)}")
-    started = herdr.agent_start(name, pane, ["--model", topic.model] if topic.model else [])
+    model_args = ["--model", topic.model] if topic.model else []  # load_topic refused a model for kinds without --model
+    started = herdr.agent_start(name, pane, model_args + topic.agent_args, topic.agent_kind)
     state.take(pane, name)
     worktree_ws = next((a.workspace_id for a in herdr.agents() if a.pane_id == pane), None)
     state.track_branch(branch, name, repo_root, worktree_ws, now())
