@@ -11,7 +11,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Callable, Mapping
 
-from herdr_orch.topics import NAME, Answers, expand_home, parse_notify
+from herdr_orch.topics import MODEL_KINDS, NAME, Answers, expand_home, parse_notify
 
 Ask = Callable[[str, str], str]  # (question, default) -> answer; an empty answer means the default
 CHECKLIST = [
@@ -71,7 +71,7 @@ def _free(name: str, taken: set[str] | frozenset[str]) -> str:
 
 def ask_answers(repo_root: str, repo_roots: list[str], env: Mapping[str, str], home: str, ask: Ask,
                 has_stop_hook: bool, taken: set[str] | frozenset[str] = frozenset(),
-                name_default: str | None = None) -> tuple[str, Answers]:
+                name_default: str | None = None, on_github: bool = False) -> tuple[str, Answers]:
     """The wizard's questions, each with its detected default. Returns the Topic name and Answers."""
     suggestion = _free(name_default or suggest_name(repo_root), taken)
     name = ask("Topic name", suggestion)
@@ -90,6 +90,11 @@ def ask_answers(repo_root: str, repo_roots: list[str], env: Mapping[str, str], h
     numbered = "; ".join(f"{i}. {item}" for i, item in enumerate(CHECKLIST, 1))
     untick = ask(f"Yours alone, all ticked: {numbered}. Numbers to untick", "none")
     extra = ask("More items that are yours alone, separated by ';'", "none")
+    github = on_github and ask("GitHub: follow PRs and gate on merges (needs gh)? yes or no", "yes").lower().startswith("y")
+    agent_kind = ask("Agent kind for seated agents (claude, codex, ...)", "claude")
+    if agent_kind not in MODEL_KINDS:
+        model = ""  # a kind that takes no --model would make the Topic fail to load
     mode, command = parse_notify(notify)
-    return name, Answers(match=[match], model=model, env=_account(env_answer), notify=mode,
+    return name, Answers(match=[match], model=model or None, github=github or None,
+                         agent_kind=None if agent_kind == "claude" else agent_kind, env=_account(env_answer), notify=mode,
                          notify_command=command, yours_alone=_checklist(untick, extra))

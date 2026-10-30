@@ -42,11 +42,51 @@ A Topic is one rule set with its own account and credentials. Each Topic has its
 | Model | sonnet, for the Orchestrator and the agents it seats (`orchestrator_model` in `topic.toml` gives the Orchestrator its own) |
 | Claude account | what your shell uses (`CLAUDE_CONFIG_DIR` when set) |
 | Push alerts | `stop-hook`: your own Claude Stop hook, run with the alert as its message, so nothing is copied into the Topic. Without one, `herdr` (herdr's notification). Or `none`, or any command |
+| GitHub | yes, asked only when the repo's `origin` is on github.com; yes writes an empty `[github]` table. Token commands are never asked: set them in `topic.toml` (see below) |
+| Agent kind | `claude`. Any other kind is written as `[agent] kind`, and `model` is dropped for a kind that takes no `--model` (only `claude` and `codex` do) |
 | Yours alone | a pre-ticked checklist: merging, production, spending, secrets |
 
-It then offers a test alert and starts the Orchestrator. The `start` action opens the wizard in a herdr popup; in a terminal, `herdr-orch setup` (or `herdr-orch init <name>`, which doesn't start anything) asks inline. Every answer is also a flag, so `init` runs without questions: `herdr-orch init acme --match '~/code/*' --model sonnet --notify stop-hook --yours-alone 'Merging pull requests'`.
+It then offers a test alert and starts the Orchestrator. The `start` action opens the wizard in a herdr popup; in a terminal, `herdr-orch setup` (or `herdr-orch init <name>`, which doesn't start anything) asks inline. Every answer is also a flag, so `init` runs without questions: `herdr-orch init acme --match '~/code/*' --model sonnet --notify stop-hook --yours-alone 'Merging pull requests' --github --agent-kind claude` (`--no-github` or no flag leaves GitHub off).
 
 There's no base-branch question: `seat` branches from each repo's own default branch (`origin/HEAD`). Set `base` in `topic.toml` only when a Topic branches from somewhere else.
+
+### GitHub and the agent kind
+Both are optional tables in `topic.toml`:
+
+```toml
+[agent]
+kind = "codex"          # herdr kind of seated agents; default claude (the Orchestrator is always Claude)
+args = ["--full-auto"]  # native args, passed after `--`
+
+[github]                # an empty table turns the Integration on
+read_token_cmd = "~/.config/acme/gh-read-token.sh"    # a command that prints a token
+write_token_cmd = "~/.config/acme/gh-write-token.sh"
+```
+
+With `[github]` the plugin follows each branch's PR (`pr` Events, the ledger, `followup` rows), runs the `deploy_check` gate and refuses `release` and `validated` while the PR is open. **Without it no `gh` call is made anywhere**: seating, Events, Inbox and Attention work as usual, `validated` needs only `--evidence`, the Orchestrator runs `release` itself, and nothing is released automatically.
+
+`read_token_cmd` is used for every poll and lookup, so plugin code doesn't spend your own login's rate limit. `write_token_cmd` is exported as `GH_TOKEN` into each seated agent's pane and the Orchestrator's, for marking ready, merging and comments. Unset, `gh`'s own login is used.
+
+**A read-only and a write GitHub App.** Create two GitHub Apps on your account or org and install both on the repos the Topic covers:
+- *read*: repository permissions Metadata, Pull requests and Actions/Checks set to read-only;
+- *write*: Contents, Pull requests and Issues set to read and write (add Workflows only if agents edit workflow files).
+
+Keep each App's private key outside the Topic (a file with mode 600, or your vault). A token helper mints a short-lived installation token from it and prints only the token. A generic one, run once per App with its own `APP_ID`, `INSTALLATION_ID` and key path (needs `openssl`, `curl`, `jq`):
+
+```sh
+#!/usr/bin/env bash
+# gh-app-token.sh: print a GitHub App installation token. Reads APP_ID, INSTALLATION_ID, KEY_FILE.
+set -euo pipefail
+b64() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+now=$(date +%s)
+header=$(printf '{"alg":"RS256","typ":"JWT"}' | b64)
+payload=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' $((now - 60)) $((now + 540)) "$APP_ID" | b64)
+sig=$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$KEY_FILE" | b64)
+curl -fsS -X POST -H "Authorization: Bearer $header.$payload.$sig" -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r .token
+```
+
+Make two thin wrappers (`gh-read-token.sh`, `gh-write-token.sh`) that export that App's three variables and `exec` the script, `chmod +x` them, and point `read_token_cmd` and `write_token_cmd` at them. Tokens expire after an hour, so the commands run again for each use; never print a token or write one into a Topic.
 
 A Topic lives in `~/.config/herdr/plugins/config/jhonsanchez.orchestrator/topics/<name>/`:
 

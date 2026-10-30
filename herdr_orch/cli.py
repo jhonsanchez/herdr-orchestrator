@@ -15,6 +15,7 @@ if sys.version_info < (3, 11):  # tomllib; macOS's /usr/bin/python3 is 3.9
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -74,6 +75,16 @@ def _checkout_root(cwd: str = ".") -> str | None:
     return str(Path(out.stdout.strip()).parent) if out.returncode == 0 and out.stdout.strip() else None
 
 
+def _origin_on_github(repo_root: str) -> bool:
+    """Whether the repo's origin remote is on github.com."""
+    try:
+        out = subprocess.run(["git", "-C", repo_root, "remote", "get-url", "origin"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.returncode == 0 and re.search(r"github\.com[:/]", out.stdout) is not None
+
+
 def _terminal_ask(question: str, default: str) -> str:
     return input(f"{question} [{default}]: ").strip() or default
 
@@ -86,7 +97,7 @@ def _setup(configs: Path, states: Path, herdr: Herdr, env: Mapping[str, str], re
     roots = [w.repo_root for w in herdr.workspaces() if w.repo_root]
     taken = {t.name for t in load_topics(configs)}
     topic_name, answers = ask_answers(repo_root, roots, env, home, _terminal_ask, has_stop_hook=bool(stop_hooks(env)),
-                                      taken=taken, name_default=name)
+                                      taken=taken, name_default=name, on_github=_origin_on_github(repo_root))
     draft = Topic(name=topic_name, dir=configs / "topics" / topic_name, env=answers.env or {},
                   notify=answers.notify or "none", notify_command=answers.notify_command or [])
     if _terminal_ask("Send a test alert before saving?", "yes").lower().startswith("y"):
@@ -142,6 +153,9 @@ def main(
     init_cmd.add_argument("--match", action="append", help="repo-root pattern (repeatable)")
     init_cmd.add_argument("--model")
     init_cmd.add_argument("--account", action="append", metavar="KEY=VALUE", help="env a seated agent needs (repeatable)")
+    init_cmd.add_argument("--github", action=argparse.BooleanOptionalAction, default=None,
+                          help="turn the GitHub Integration on (writes [github]) or leave it off")
+    init_cmd.add_argument("--agent-kind", help="herdr agent kind of seated agents (default claude)")
     init_cmd.add_argument("--notify", help="stop-hook, herdr, none, or a command")
     init_cmd.add_argument("--yours-alone", action="append", metavar="ITEM", help="never decided by the Orchestrator (repeatable)")
     start_cmd = sub.add_parser("start", help="seat a Topic's Orchestrator (Topic from the workspace when omitted)")
@@ -343,13 +357,14 @@ def main(
 
 def _answers(args: argparse.Namespace) -> Answers | None:
     """The init flags as Answers; None when none was given (the template as it ships)."""
-    if not any((args.match, args.model, args.account, args.notify, args.yours_alone)):
+    if not any((args.match, args.model, args.account, args.notify, args.yours_alone, args.agent_kind, args.github is not None)):
         return None
     notify, command = parse_notify(args.notify or "")
     return Answers(
         match=args.match, model=args.model,
         env=dict(a.split("=", 1) for a in args.account) if args.account else None,
         notify=notify, notify_command=command, yours_alone=args.yours_alone,
+        github=args.github, agent_kind=args.agent_kind,
     )
 
 
