@@ -80,6 +80,16 @@ class Topic:
         return self.playbook_path.exists() and bool(YOURS_ALONE.search(self.playbook_path.read_text()))
 
     @property
+    def read_token_cmd(self) -> str:
+        """The command whose output is the token for polling and lookups; empty: gh's own login."""
+        return (self.github or {}).get("read_token_cmd", "")
+
+    @property
+    def write_token_cmd(self) -> str:
+        """The command whose output is the token for marking ready, merging, comments and dispatches."""
+        return (self.github or {}).get("write_token_cmd", "")
+
+    @property
     def brief_path(self) -> Path:
         return self.dir / "brief.md"
 

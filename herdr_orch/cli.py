@@ -29,7 +29,7 @@ from herdr_orch.herdr import CliHerdr, Herdr, find_key
 from herdr_orch.notify import notifier_for, stop_hooks
 from herdr_orch.reconcile import reconcile
 from herdr_orch.runner import Runner
-from herdr_orch.github import CliGitHub
+from herdr_orch.github import CliGitHub, token_from
 from herdr_orch.ledger import status_rows, status_table
 from herdr_orch.seating import ORCH_SESSION, bring_back, ensure_link, ensure_orch_session, ensure_runner, orch_herdr, release, seat, session_herdr, start, validated
 from herdr_orch.state import TopicState, find_managed, pid_alive, state_root
@@ -295,7 +295,8 @@ def main(
             print(json.dumps(rows) if args.json else status_table(rows))
         elif args.cmd == "deployed":
             home = env.get("HOME") or str(Path.home())
-            return 0 if is_deployed(args.sha, plugins_dir(env, home), state) else 1
+            token = token_from(topic.read_token_cmd, home) if topic.read_token_cmd else None
+            return 0 if is_deployed(args.sha, plugins_dir(env, home), state, token) else 1
         elif args.cmd == "start":
             home = env.get("HOME") or str(Path.home())
             if not _start(topic, state, herdr, ensure_link(CLI, home, plugins_dir(env, home)), getattr(args, "detach", False), caller_socket):
@@ -325,7 +326,7 @@ def main(
                                           plugins_dir(env, env.get("HOME") or str(Path.home()))))
             print(f"{seated.name} {seated.pane_id}")
         elif args.cmd == "release":
-            release(state, herdr, CliGitHub() if topic.github_on else None, args.branch)
+            release(state, herdr, CliGitHub(topic.read_token_cmd, env.get('HOME')) if topic.github_on else None, args.branch)
             print(f"{args.branch} released")
         elif args.cmd == "validated":
             validated(state, args.branch, now(), args.evidence, bool(topic.deploy_check), topic.github_on)
@@ -399,7 +400,7 @@ def _watch(topic: Topic, state: TopicState, herdr: Herdr, now: Callable[[], floa
     def say(line: str) -> None:
         print(line, flush=True)
 
-    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say, CliGitHub() if topic.github_on else None, orch,
+    runner = Runner(topic, state, herdr, watches, notifier_for(topic, herdr=herdr), say, CliGitHub(topic.read_token_cmd, env.get('HOME')) if topic.github_on else None, orch,
                     str(Path(env.get("HOME") or Path.home()) / ".local" / "bin" / "herdr-orch"))
     say(f"Watch runner: topic {topic.name}")
     try:

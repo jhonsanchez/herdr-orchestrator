@@ -173,11 +173,21 @@ def seat(
     return Seated(name, pane)
 
 
+def export_write_token(topic: Topic, herdr: Herdr, pane: str, home: str) -> None:
+    """GH_TOKEN in the pane from the Topic's write command, before the agent starts. The pane's shell
+    runs the command itself, so the token never passes through this process or the pane's scrollback."""
+    if not topic.write_token_cmd:
+        return
+    argv = " ".join(shlex.quote(expand_home(a, home)) for a in shlex.split(topic.write_token_cmd))
+    herdr.pane_run(pane, f'export GH_TOKEN="$({argv})" && export GITHUB_TOKEN="$GH_TOKEN"')
+
+
 def _start_and_brief(topic: Topic, state: TopicState, herdr: Herdr, branch: str, name: str, pane: str, home: str,
                      say: Callable[[str], None], existing: bool, now: Callable[[], float], cli: str,
                      repo_root: str | None) -> None:
     for key, value in topic.env.items():
         herdr.pane_run(pane, f"export {key}={shlex.quote(expand_home(value, home))}")
+    export_write_token(topic, herdr, pane, home)
     herdr.pane_run(pane, f"export HERDR_ORCH_AGENT={shlex.quote(name)}")
     herdr.pane_run(pane, f"export HERDR_ORCH_TOPIC={shlex.quote(topic.name)}")
     model_args = ["--model", topic.model] if topic.model else []  # load_topic refused a model for kinds without --model
@@ -412,6 +422,7 @@ def start(
         # Its own session's variables point at the orch session: every herdr call it makes goes to the Topic's.
         home.pane_run(root_pane, f"export HERDR_SOCKET_PATH={shlex.quote(str(state.socket()))}")
     model = topic.orchestrator_model or topic.model
+    export_write_token(topic, home, root_pane, str(Path.home()))
     started = home.agent_start(name, root_pane, ["--model", model] if model else [])
     # The runner comes second: before the Orchestrator exists, it would report the Topic Unattended.
     spawn(cli, topic, state)
