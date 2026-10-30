@@ -1,8 +1,10 @@
 import os
 import stat
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from herdr_orch import github, seating
@@ -49,13 +51,13 @@ class TokenCommandTest(unittest.TestCase):
         cmd = script(self.dir, "tok", f'echo x >> {counter}; echo tok$(wc -l < {counter})')
         gh = CliGitHub(cmd, "/h", clock=lambda: now[0])
         seen: list[str] = []
-        real = github.subprocess.run
-        def run(args, **kw):  # noqa: ANN001
+        real = subprocess.run
+        def run(args: list[str], **kw: Any) -> Any:
             if args[0] != "gh":
                 return real(args, **kw)
             seen.append(kw["env"]["GH_TOKEN"])
             return mock.Mock(returncode=0, stdout="[]", stderr="")
-        with mock.patch.object(github.subprocess, "run", side_effect=run):
+        with mock.patch.object(subprocess, "run", side_effect=run):
             gh.open_pulls("/r")
             gh.open_pulls("/r")
             now[0] = github.TOKEN_TTL_SECONDS + 1
@@ -63,10 +65,10 @@ class TokenCommandTest(unittest.TestCase):
         self.assertEqual([t.strip() for t in seen], ["tok1", "tok1", "tok2"])
 
     def test_without_a_command_gh_inherits_the_environment(self) -> None:
-        def run(args, **kw):  # noqa: ANN001
+        def run(args: list[str], **kw: Any) -> Any:
             self.assertIsNone(kw["env"])
             return mock.Mock(returncode=0, stdout="[]", stderr="")
-        with mock.patch.object(github.subprocess, "run", side_effect=run):
+        with mock.patch.object(subprocess, "run", side_effect=run):
             CliGitHub().open_pulls("/r")
 
 
