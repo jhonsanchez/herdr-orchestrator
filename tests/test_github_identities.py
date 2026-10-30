@@ -48,7 +48,7 @@ class TokenCommandTest(unittest.TestCase):
     def test_gh_runs_with_the_read_token_and_asks_again_after_the_ttl(self) -> None:
         now = [0.0]
         counter = self.dir / "n"
-        cmd = script(self.dir, "tok", f'echo x >> {counter}; echo tok$(wc -l < {counter} | tr -d ' ')')
+        cmd = script(self.dir, "tok", f"echo x >> {counter}; echo tok$(wc -l < {counter} | tr -d '[:space:]')")
         gh = CliGitHub(cmd, "/h", clock=lambda: now[0])
         seen: list[str] = []
         real = subprocess.run
