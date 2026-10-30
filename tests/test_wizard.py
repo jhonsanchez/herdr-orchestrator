@@ -6,7 +6,7 @@ from pathlib import Path
 
 from herdr_orch.cli import main
 from herdr_orch.herdr import Workspace
-from herdr_orch.topics import load_topic
+from herdr_orch.topics import Answers, load_topic
 from tests.fakes import FakeHerdr
 
 from herdr_orch.wizard import CHECKLIST, ask_answers, matching_repos, suggest_account, suggest_match, suggest_name
@@ -92,6 +92,38 @@ class AskAnswersTest(unittest.TestCase):
         self.assertEqual(a.env, {"CLAUDE_CONFIG_DIR": "~/.claude-zebra"})
 
 
+class GithubAndAgentQuestionsTest(unittest.TestCase):
+    def ask(self, *answers: str, on_github: bool) -> tuple[Script, Answers]:
+        ask = Script(*answers)
+        _, a = ask_answers("/home/u/projects/personal/a", ["/home/u/projects/personal/a"], {"HOME": "/home/u"},
+                           "/home/u", ask, has_stop_hook=True, on_github=on_github)
+        return ask, a
+
+    def test_enter_through_on_a_github_origin_turns_github_on_and_keeps_claude(self) -> None:
+        ask, a = self.ask(on_github=True)
+        self.assertTrue(a.github)
+        self.assertIsNone(a.agent_kind)
+        self.assertTrue(any(q.startswith("GitHub") for q, _ in ask.asked))
+        self.assertFalse(any("token" in q.lower() for q, _ in ask.asked))
+
+    def test_github_is_not_asked_when_origin_is_elsewhere(self) -> None:
+        ask, a = self.ask(on_github=False)
+        self.assertFalse(a.github)
+        self.assertFalse(any(q.startswith("GitHub") for q, _ in ask.asked))
+
+    def test_answering_no_leaves_github_off(self) -> None:
+        _, a = self.ask("", "", "", "", "", "", "", "no", on_github=True)
+        self.assertFalse(a.github)
+
+    def test_a_kind_without_model_support_drops_the_model(self) -> None:
+        _, a = self.ask("", "", "", "", "", "", "", "", "gemini", on_github=True)
+        self.assertEqual((a.agent_kind, a.model), ("gemini", None))
+
+    def test_codex_keeps_the_model(self) -> None:
+        _, a = self.ask("", "", "", "", "", "", "", "", "codex", on_github=True)
+        self.assertEqual((a.agent_kind, a.model), ("codex", "sonnet"))
+
+
 class InitWithFlagsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -120,6 +152,19 @@ class InitWithFlagsTest(unittest.TestCase):
         playbook = t.playbook_path.read_text()
         self.assertIn("- Merging pull requests\n- Spending money\n", playbook)
         self.assertNotIn("Production: deploys", playbook)
+
+    def test_github_and_agent_kind_flags_are_written_and_read_back(self) -> None:
+        self.assertEqual(self.init("--github", "--agent-kind", "codex", "--model", "gpt"), 0)
+        t = load_topic(self.cfg / "topics/personal")
+        self.assertTrue(t.github_on)
+        self.assertEqual((t.agent_kind, t.model), ("codex", "gpt"))
+
+    def test_no_github_and_the_default_kind_write_nothing(self) -> None:
+        self.assertEqual(self.init("--no-github", "--agent-kind", "claude"), 0)
+        text = (self.cfg / "topics/personal/topic.toml").read_text()
+        self.assertNotIn("[github]", text)
+        self.assertNotIn("[agent]", text)
+        self.assertFalse(load_topic(self.cfg / "topics/personal").github_on)
 
     def test_an_empty_checklist_empties_the_section_and_keeps_what_follows(self) -> None:
         self.init("--match", "~/x/*")

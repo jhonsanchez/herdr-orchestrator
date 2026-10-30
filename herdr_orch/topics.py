@@ -163,6 +163,8 @@ class Answers:
     notify: str | None = None
     notify_command: list[str] | None = None
     yours_alone: list[str] | None = None
+    github: bool | None = None  # True writes an empty [github] table
+    agent_kind: str | None = None  # written as [agent] kind unless it is the default
 
 
 def _topic_toml(a: Answers) -> str:
@@ -173,6 +175,10 @@ def _topic_toml(a: Answers) -> str:
             lines.append(f"{key} = {json.dumps(value)}")  # a JSON string or list of strings is valid TOML
     if a.env:
         lines += ["", "[env]"] + [f"{k} = {json.dumps(v)}" for k, v in a.env.items()]
+    if a.agent_kind and a.agent_kind != "claude":
+        lines += ["", "[agent]", f"kind = {json.dumps(a.agent_kind)}"]
+    if a.github:
+        lines += ["", "[github]"]
     return "\n".join(lines) + "\n"
 
 
