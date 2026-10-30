@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import subprocess
+import time
 from dataclasses import dataclass, replace
-from typing import Any, Literal, Protocol
+from pathlib import Path
+from typing import Any, Callable, Literal, Protocol
 
 PrState = Literal["open", "merged", "closed"]
 Checks = Literal["passing", "failing", "pending", "none"]
@@ -129,10 +133,49 @@ def rollup_of(check_runs: dict[str, Any], status: dict[str, Any]) -> list[dict[s
                    for s in status.get("statuses", [])]
 
 
+TOKEN_TTL_SECONDS = 30 * 60.0  # GitHub App installation tokens last an hour: ask again well before
+
+
+def token_from(command: str, home: str | None = None) -> str:
+    """The token a Topic's token command prints. RuntimeError when it fails or prints nothing;
+    the message never carries the token."""
+    home = home or str(Path.home())
+    argv = [home + a[1:] if a.startswith("~") else a for a in shlex.split(command)]
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError(f"token command could not be run: {e}") from e
+    token = out.stdout.strip()
+    if out.returncode != 0 or not token:
+        raise RuntimeError(f"token command failed (exit {out.returncode}): {out.stderr.strip()[:200]}")
+    return token
+
+
+def gh_env(token: str | None) -> dict[str, str] | None:
+    """The environment for one gh call: the token as GH_TOKEN, else None (inherit)."""
+    return {**os.environ, "GH_TOKEN": token, "GITHUB_TOKEN": token} if token else None
+
+
 class CliGitHub:
+    """gh through the Topic's read token when it has one (its own rate limit, never the user's login)."""
+
+    def __init__(self, read_token_cmd: str = "", home: str | None = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.read_token_cmd, self.home, self.clock = read_token_cmd, home, clock
+        self._token = ""
+        self._token_at = 0.0
+
+    def _read_token(self) -> str | None:
+        if not self.read_token_cmd:
+            return None
+        if not self._token or self.clock() - self._token_at >= TOKEN_TTL_SECONDS:
+            self._token, self._token_at = token_from(self.read_token_cmd, self.home), self.clock()
+        return self._token
+
     def _api(self, args: list[str], repo_root: str) -> str:
         try:
-            out = subprocess.run(args, cwd=repo_root, capture_output=True, text=True, timeout=60)
+            out = subprocess.run(args, cwd=repo_root, capture_output=True, text=True, timeout=60,
+                                 env=gh_env(self._read_token()))
         except (OSError, subprocess.TimeoutExpired) as e:
             raise RuntimeError(f"gh could not be run: {e}") from e
         if out.returncode != 0:

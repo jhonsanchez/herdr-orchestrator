@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Mapping
 
+from herdr_orch.github import gh_env
 from herdr_orch.state import PLUGIN_ID, TopicState
 
 
@@ -43,7 +44,7 @@ def compare_args(sha: str, head: str) -> list[str]:
             "--jq", ".status"]
 
 
-def holds(checkout: Path, sha: str) -> bool:
+def holds(checkout: Path, sha: str, token: str | None = None) -> bool:
     """Whether the checkout's HEAD is sha or descends from it. herdr installs a depth-1 clone, so git
     cannot see older merges: ask GitHub (compare status identical/ahead) and fail closed when it cannot say."""
     try:
@@ -52,7 +53,8 @@ def holds(checkout: Path, sha: str) -> bool:
             return False
         if head == sha or _git(checkout, "merge-base", "--is-ancestor", sha, head).returncode == 0:
             return True
-        out = subprocess.run(compare_args(sha, head), cwd=checkout, capture_output=True, text=True, timeout=60)
+        out = subprocess.run(compare_args(sha, head), cwd=checkout, capture_output=True, text=True, timeout=60,
+                             env=gh_env(token))
     except (OSError, subprocess.TimeoutExpired):
         return False
     return out.returncode == 0 and out.stdout.strip() in ("identical", "ahead")
@@ -78,10 +80,10 @@ def runner_on(checkout: Path, pid: int) -> bool:
     return any(f"PYTHONPATH={c}/" in environ for c in {str(checkout), str(checkout.resolve())})
 
 
-def is_deployed(sha: str, plugins_dir: Path, state: TopicState) -> bool:
+def is_deployed(sha: str, plugins_dir: Path, state: TopicState, token: str | None = None) -> bool:
     checkout = installed_checkout(plugins_dir)
     status = state.runner_status()
-    return bool(sha and checkout and status and holds(checkout, sha) and runner_on(checkout, status.pid))
+    return bool(sha and checkout and status and holds(checkout, sha, token) and runner_on(checkout, status.pid))
 
 
 def plugins_dir(env: Mapping[str, str], home: str) -> Path:
