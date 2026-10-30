@@ -48,7 +48,7 @@ class TokenCommandTest(unittest.TestCase):
     def test_gh_runs_with_the_read_token_and_asks_again_after_the_ttl(self) -> None:
         now = [0.0]
         counter = self.dir / "n"
-        cmd = script(self.dir, "tok", f'echo x >> {counter}; echo tok$(wc -l < {counter})')
+        cmd = script(self.dir, "tok", f'echo x >> {counter}; echo tok$(wc -l < {counter} | tr -d ' ')')
         gh = CliGitHub(cmd, "/h", clock=lambda: now[0])
         seen: list[str] = []
         real = subprocess.run
@@ -62,7 +62,7 @@ class TokenCommandTest(unittest.TestCase):
             gh.open_pulls("/r")
             now[0] = github.TOKEN_TTL_SECONDS + 1
             gh.open_pulls("/r")
-        self.assertEqual([t.strip() for t in seen], ["tok1", "tok1", "tok2"])
+        self.assertEqual(seen, ["tok1", "tok1", "tok2"])
 
     def test_without_a_command_gh_inherits_the_environment(self) -> None:
         def run(args: list[str], **kw: Any) -> Any:
